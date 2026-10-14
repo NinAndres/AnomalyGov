@@ -73,6 +73,9 @@ def test_publish_is_complete_minimal_and_idempotent(source, target):
     ).fetchone()
     assert counts == (sample_size, sample_size, 0, *source_metrics)
 
+    hypothesis_counts = "SELECT (SELECT count(*) FROM hypothesis_units WHERE experiment = %s), "                         "(SELECT count(*) FROM hypothesis_tests WHERE experiment = %s)"
+    assert target.execute(hypothesis_counts, (experiment, experiment)).fetchone() ==         source.execute(hypothesis_counts, (experiment, experiment)).fetchone()
+
     # New rows created on the target (e.g. exploration runs) must not collide with published ids.
     next_id = target.execute(
         """INSERT INTO runs (experiment, config_sha256, mode, purpose, algorithm, params, feature_columns,

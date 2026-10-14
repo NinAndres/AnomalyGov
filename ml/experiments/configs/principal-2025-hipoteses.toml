@@ -1,0 +1,20 @@
+# Teste das hipóteses H1 e H2 (decisão 0008) sobre a amostra principal do experimento base.
+# Executar: python -m anomalygov_ml.hypotheses experiments/configs/principal-2025-hipoteses.toml
+
+base_config = "principal-2025.toml"  # amostra principal e configuração principal dos algoritmos
+alpha = 0.05                          # com correção de Holm dentro de cada família de testes
+p = 0.01                              # limiar principal
+p_secondary = 0.05
+seed = 0                              # divisão A/B, subamostras, manipulação, bootstrap e permutações
+bootstrap = 10000
+permutations = 10000
+
+[h1]
+types = ["individual", "company"]
+subsample_fraction = 0.8
+subsample_repetitions = 5
+manipulation_type = "company"
+manipulation_fractions = [0.0, 0.1, 0.3, 0.5]  # a primeira fração deve ser 0 (referência)
+
+[h2]
+noise_seed = 1  # semente alternativa do Isolation Forest para a referência de ruído

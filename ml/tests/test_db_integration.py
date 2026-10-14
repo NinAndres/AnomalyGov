@@ -129,3 +129,74 @@ def test_tiny_experiment_end_to_end(tmp_path):
         for heading in ("Tempo de execução", "Proporção", "Concordância", "Estabilidade", "Características",
                         "Interpretabilidade", "artefato do LOF"):
             assert heading in text
+
+
+HYPOTHESES_CONFIG = """
+base_config = "small.toml"
+alpha = 0.05
+p = 0.02
+p_secondary = 0.05
+seed = 0
+bootstrap = 500
+permutations = 500
+
+[h1]
+types = ["individual", "company"]
+subsample_fraction = 0.8
+subsample_repetitions = 2
+manipulation_type = "company"
+manipulation_fractions = [0.0, 0.1, 0.3, 0.5]
+
+[h2]
+noise_seed = 1
+"""
+
+
+def test_hypotheses_end_to_end(tmp_path):
+    from anomalygov_ml import hypotheses
+    from anomalygov_ml.experiment import Experiment
+
+    small = TINY_CONFIG.replace('name = "teste-integracao"', 'name = "teste-hipoteses"').replace(
+        "total = 300\nfloor = 2", "total = 3000\nfloor = 20")
+    (tmp_path / "small.toml").write_text(small, encoding="utf-8")
+    config = tmp_path / "hyp.toml"
+    config.write_text(HYPOTHESES_CONFIG, encoding="utf-8")
+
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.transaction(force_rollback=True):
+        Experiment(conn, tmp_path / "small.toml").run(("main",))
+        for _ in range(2):  # the second run must replace the first one
+            hypotheses.run(conn, config)
+
+        runs = dict(conn.execute(
+            "SELECT purpose, count(*) FROM runs WHERE experiment = 'teste-hipoteses' AND purpose LIKE 'h%' GROUP BY 1"
+        ).fetchall())
+        assert runs == {"h2_month": 36, "h2_noise": 12, "h1_cell": 72, "h1_subsample": 24 * 3 * 2,
+                        "h1_manipulation": 12 * 4 * 3}
+        assert conn.execute(
+            "SELECT bool_and(subset IS NOT NULL AND scored_sample_id IS NULL) FROM runs "
+            "WHERE experiment = 'teste-hipoteses' AND purpose LIKE 'h%'"
+        ).fetchone()[0]
+
+        units = dict(conn.execute(
+            "SELECT hypothesis, count(*) FROM hypothesis_units WHERE experiment = 'teste-hipoteses' GROUP BY 1"
+        ).fetchall())
+        assert units == {"H2": 132 + 12, "H1": 24 + 12 * 4}
+
+        families = dict(conn.execute(
+            "SELECT family, count(*) FROM hypothesis_tests WHERE experiment = 'teste-hipoteses' GROUP BY 1"
+        ).fetchall())
+        assert families == {"H2": 3, "H2_context": 3, "H1a_type": 6, "H1b_association": 18, "H1c_manipulation": 6}
+        assert conn.execute(
+            """SELECT bool_and(p_adjusted >= p_value AND p_adjusted <= 1 AND p_value BETWEEN 0 AND 1)
+               FROM hypothesis_tests WHERE experiment = 'teste-hipoteses'"""
+        ).fetchone()[0]
+        from anomalygov_ml import report
+
+        text = report.render_hypotheses(report.load(conn, "teste-hipoteses").hypothesis_tests)
+        for family in ("H2:", "H1a:", "H1b:", "H1c:"):
+            assert family in text
+        # Without manipulation the flags are unchanged: retention is 1 at fraction 0.
+        assert conn.execute(
+            """SELECT bool_and((measures->>'retention_if')::float = 1) FROM hypothesis_units
+               WHERE experiment = 'teste-hipoteses' AND (unit->>'duplicate_fraction')::float = 0"""
+        ).fetchone()[0]

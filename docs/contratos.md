@@ -117,6 +117,19 @@ Calculadas por `python -m anomalygov_ml.report <experimento>` (decisão 0007) pa
 | `jaccard` | double precision | Jaccard dos sinalizados no limiar `p` |
 | `spearman` | double precision | Correlação de Spearman dos escores (não depende de `p`) |
 
+### Hipóteses (005)
+
+`runs` ganha a coluna `subset` (jsonb, nula = amostra inteira) e as finalidades `h1_cell`, `h1_subsample`, `h1_manipulation`, `h2_month` e `h2_noise` (decisão 0008).
+
+| Tabela | Colunas principais |
+|---|---|
+| `hypothesis_units` | `experiment`, `hypothesis` (`H1`, `H2`), `unit` (jsonb: célula, par de meses ou fração de manipulação), `measures` (jsonb: indicadores da unidade) |
+| `hypothesis_tests` | `experiment`, `hypothesis`, `family` (família da correção de Holm), `test`, `variable`, `n`, `statistic`, `effect`, `ci_low`, `ci_high`, `p_value`, `p_adjusted`, `details` (jsonb, inclui `alpha`) |
+
+### Segurança (005)
+
+Todas as tabelas têm RLS ativo e nenhuma política. No Supabase, isso bloqueia o acesso pela API REST (papéis `anon` e `authenticated`). O backend deve conectar com um papel que ignore RLS (o dono das tabelas ou `postgres`). Expor dados pela API exigirá políticas explícitas numa migration nova.
+
 ## Filtros disponíveis por base
 
 Definidos em `PaymentsAdapter.filters` (`ml/src/anomalygov_ml/sources/payments.py`):

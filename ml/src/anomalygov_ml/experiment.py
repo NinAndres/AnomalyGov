@@ -63,6 +63,27 @@ def log(message: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
 
 
+def insert_run(
+    cur: psycopg.Cursor, experiment: str, config_sha256: str, purpose: str, algorithm: str,
+    params: dict[str, Any], random_state: int | None, feature_columns: list[str], train_sample_id: int,
+    scored_sample_id: int | None, n_train: int, n_scored: int, fit_seconds: float, score_seconds: float,
+    environment: dict[str, Any], subset: dict[str, Any] | None = None,
+) -> int:
+    """Record one algorithm execution (AGENTS.md, section 7) and return its id."""
+    cur.execute(
+        """INSERT INTO runs (experiment, config_sha256, mode, purpose, algorithm, params, random_state,
+                             feature_columns, train_sample_id, scored_sample_id, n_train, n_scored,
+                             fit_seconds, score_seconds, environment, subset)
+           VALUES (%s, %s, 'experiment', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+        (
+            experiment, config_sha256, purpose, algorithm, Jsonb(params), random_state, feature_columns,
+            train_sample_id, scored_sample_id, n_train, n_scored, fit_seconds, score_seconds, Jsonb(environment),
+            Jsonb(subset) if subset is not None else None,
+        ),
+    )
+    return cur.fetchone()[0]
+
+
 class Experiment:
     def __init__(self, conn: psycopg.Connection, config_path: Path):
         raw = config_path.read_bytes()
@@ -137,18 +158,11 @@ class Experiment:
         score_seconds = time.perf_counter() - start
 
         with self.conn.transaction(), self.conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO runs (experiment, config_sha256, mode, purpose, algorithm, params, random_state,
-                                     feature_columns, train_sample_id, scored_sample_id, n_train, n_scored,
-                                     fit_seconds, score_seconds, environment)
-                   VALUES (%s, %s, 'experiment', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-                (
-                    self.config["name"], self.config_sha256, purpose, algorithm, Jsonb(detector.resolved_params),
-                    random_state, list(self.adapter.feature_columns), train.id, scored.id if scored else None,
-                    len(X_train), len(X_scored), fit_seconds, score_seconds, Jsonb(self.environment),
-                ),
+            run_id = insert_run(
+                cur, self.config["name"], self.config_sha256, purpose, algorithm, detector.resolved_params,
+                random_state, list(self.adapter.feature_columns), train.id, scored.id if scored else None,
+                len(X_train), len(X_scored), fit_seconds, score_seconds, self.environment,
             )
-            run_id = cur.fetchone()[0]
             if scored is not None:
                 normalized = metrics.normalize(scores)
                 with cur.copy("COPY run_scores (run_id, payment_id, raw_score, normalized_score) FROM STDIN") as copy:

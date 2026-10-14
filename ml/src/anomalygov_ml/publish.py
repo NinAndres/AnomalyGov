@@ -4,8 +4,10 @@ Usage: python -m anomalygov_ml.publish EXPERIMENT [--scores main,parameter,...]
 
 Copies, in a single transaction on the target, only what the application needs: the main sample with its
 payments, favored and management units, the dataset files, every run of the experiment with its metrics and
-comparisons, and the per-record scores of the runs whose purpose is listed in --scores (default: main).
-Ids are preserved, so re-publishing is idempotent. The target must already have the migrations applied.
+comparisons, the hypothesis results, and the per-record scores of the runs whose purpose is listed in --scores
+(default: main). Ids are preserved, so re-publishing is idempotent; runs and hypothesis results of the
+experiment that no longer exist locally are removed from the target. The target must already have the
+migrations applied.
 Source: DATABASE_URL. Target: SUPABASE_DATABASE_URL.
 """
 
@@ -13,6 +15,7 @@ import argparse
 import os
 
 import psycopg
+import psycopg.sql
 
 COLUMNS = {
     "dataset_files": "id, source, file_name, sha256, row_count, period_start, period_end, ingested_at, "
@@ -24,12 +27,15 @@ COLUMNS = {
     "sample_records": "sample_id, payment_id, weight",
     "runs": "id, experiment, config_sha256, mode, purpose, algorithm, params, random_state, feature_columns, "
             "train_sample_id, scored_sample_id, n_train, n_scored, fit_seconds, score_seconds, environment, "
-            "created_at",
+            "created_at, subset",
     "run_scores": "run_id, payment_id, raw_score, normalized_score",
     "run_metrics": "run_id, p, flagged_count, flagged_share, weighted_flagged_share",
     "run_comparisons": "run_a, run_b, p, jaccard, spearman",
+    "hypothesis_units": "id, experiment, hypothesis, unit, measures, created_at",
+    "hypothesis_tests": "id, experiment, hypothesis, family, test, variable, n, statistic, effect, ci_low, ci_high, "
+                        "p_value, p_adjusted, details, created_at",
 }
-IDENTITY_TABLES = ("dataset_files", "favored", "payments", "samples", "runs")
+IDENTITY_TABLES = ("dataset_files", "favored", "payments", "samples", "runs", "hypothesis_units", "hypothesis_tests")
 UPSERT = {
     "run_metrics": "ON CONFLICT (run_id, p) DO UPDATE SET flagged_count = EXCLUDED.flagged_count, "
                    "flagged_share = EXCLUDED.flagged_share, weighted_flagged_share = EXCLUDED.weighted_flagged_share",
@@ -79,6 +85,7 @@ def publish(source: psycopg.Connection, target: psycopg.Connection, experiment: 
         raise ValueError(f"ids de execução já usados por outro experimento no destino: {clash[:5]}")
 
     in_sample = f"SELECT payment_id FROM sample_records WHERE sample_id = {main_sample}"
+    quoted = psycopg.sql.Literal(experiment).as_string(source)
     file_ids = f"SELECT unnest(dataset_file_ids) FROM samples WHERE id IN ({ids_sql(sample_ids)})"
     steps = [
         ("dataset_files", f"SELECT {COLUMNS['dataset_files']} FROM dataset_files WHERE id IN ({file_ids})"),
@@ -94,9 +101,17 @@ def publish(source: psycopg.Connection, target: psycopg.Connection, experiment: 
         ("run_metrics", f"SELECT {COLUMNS['run_metrics']} FROM run_metrics WHERE run_id IN ({ids_sql(run_ids)})"),
         ("run_comparisons", f"""SELECT {COLUMNS['run_comparisons']} FROM run_comparisons
                                 WHERE run_a IN ({ids_sql(run_ids)}) AND run_b IN ({ids_sql(run_ids)})"""),
+        ("hypothesis_units", f"SELECT {COLUMNS['hypothesis_units']} FROM hypothesis_units WHERE experiment = {quoted}"),
+        ("hypothesis_tests", f"SELECT {COLUMNS['hypothesis_tests']} FROM hypothesis_tests WHERE experiment = {quoted}"),
     ]
     written = {}
     with target.transaction():
+        # Runs re-executed locally get new ids: drop the stale ones (cascades to their scores and metrics).
+        target.execute(
+            f"DELETE FROM runs WHERE experiment = %s AND mode = 'experiment' AND id NOT IN ({ids_sql(run_ids)})", (experiment,)
+        )
+        for table in ("hypothesis_units", "hypothesis_tests"):
+            target.execute(f"DELETE FROM {table} WHERE experiment = %s", (experiment,))
         for table, select_sql in steps:
             written[table] = transfer(source, target, table, select_sql)
         for table in IDENTITY_TABLES:

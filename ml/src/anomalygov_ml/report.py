@@ -82,6 +82,7 @@ class ExperimentData:
     records: pd.DataFrame  # main sample records with weights and attributes, indexed by payment_id
     features: pd.DataFrame  # unscaled features of the main sample, indexed by payment_id
     dataset_files: pd.DataFrame
+    hypothesis_tests: pd.DataFrame
 
     def main_run(self, algorithm: str) -> int:
         return int(self.runs[(self.runs.purpose == "main") & (self.runs.algorithm == algorithm)].index[0])
@@ -129,7 +130,15 @@ def load(conn: psycopg.Connection, name: str) -> ExperimentData:
         f"""SELECT d.id, d.file_name, d.loaded_row_count FROM dataset_files d
             JOIN samples s ON d.id = ANY (s.dataset_file_ids) WHERE s.id = {main_sample} ORDER BY d.id""",
     )
-    return ExperimentData(name, runs, scores, records, features, dataset_files)
+    test_rows = conn.execute(
+        """SELECT hypothesis, family, test, variable, n, statistic, effect, ci_low, ci_high, p_value, p_adjusted,
+                  details FROM hypothesis_tests WHERE experiment = %s ORDER BY id""",
+        (name,),
+    ).fetchall()
+    hypothesis_tests = pd.DataFrame(test_rows, columns=[
+        "hypothesis", "family", "test", "variable", "n", "statistic", "effect", "ci_low", "ci_high", "p_value",
+        "p_adjusted", "details"])
+    return ExperimentData(name, runs, scores, records, features, dataset_files, hypothesis_tests)
 
 
 # ---------------------------------------------------------------- metrics tables
@@ -358,6 +367,9 @@ def render(data: ExperimentData, run_metrics: pd.DataFrame, run_comparisons: pd.
         out.append(f"\n<details><summary>Regras da árvore substituta: {LABELS[alg]}</summary>\n\n"
                    f"```\n{trees[alg][1]}```\n\n</details>")
 
+    if len(data.hypothesis_tests):
+        out.append(render_hypotheses(data.hypothesis_tests))
+
     artifacts = runs[runs.purpose == "artifact"]
     if len(artifacts):
         out.append("\n## Apêndice: artefato do LOF com vetores duplicados\n")
@@ -372,6 +384,51 @@ def render(data: ExperimentData, run_metrics: pd.DataFrame, run_comparisons: pd.
         out.append(table(["Parâmetros", "Escore máximo", "Sinalizados com escore > 1.000", "Jaccard com o LOF principal"],
                          rows))
     return "\n".join(out) + "\n"
+
+
+FAMILY_TITLES = {
+    "H2": "H2: Isolation Forest × LOF entre meses (teste unilateral: IF mais estável)",
+    "H2_context": "Contexto da H2: Isolation Forest × One-Class SVM (bilateral)",
+    "H1a_type": "H1a: indicadores por tipo de favorecido (`individual` × `company`)",
+    "H1b_association": "H1b: associação entre atipicidade da célula e indicadores",
+    "H1c_manipulation": "H1c: manipulação controlada de duplicados (células `company`)",
+}
+
+
+def describe_details(test: pd.Series) -> str:
+    d = test.details
+    if "median_jaccard_if" in d:
+        return (f"IF {num(d['median_jaccard_if'])}; outro {num(d['median_jaccard_other'])}; "
+                f"ruído de semente do IF {num(d['median_if_seed_noise'])}")
+    if "median_first" in d:
+        return f"{d['groups'][0]} {num(d['median_first'])}; {d['groups'][1]} {num(d['median_second'])}"
+    if "medians" in d:
+        return "; ".join(f"{pct(float(f), 0)}: {num(v)}" for f, v in d["medians"].items())
+    return ""
+
+
+def render_hypotheses(tests: pd.DataFrame) -> str:
+    out = ["\n## 7. Hipóteses (decisão 0008)\n"]
+    alpha = tests.details.iloc[0]["alpha"]
+    out.append(f"p ajustado pela correção de Holm dentro de cada família; significativo quando p ajustado < {num(alpha, 2)}. "
+               "Efeito: diferença média dos Jaccard (H2, com IC 95% por bootstrap em blocos de meses), correlação "
+               "bisserial de postos (H1a), Spearman (H1b) ou W de Kendall (H1c). As medianas descrevem os indicadores.\n")
+    for family, title in FAMILY_TITLES.items():
+        rows = tests[tests.family == family]
+        if not len(rows):
+            continue
+        significant = int((rows.p_adjusted < alpha).sum())
+        out.append(f"\n### {title}\n")
+        out.append(f"{significant} de {len(rows)} testes significativos.\n")
+        out.append(table(
+            ["Variável", "n", "Teste", "Estatística", "Efeito", "IC 95%", "p", "p ajustado", "Medianas"],
+            [[f"`{r.variable}`", r.n, r.test, num(r.statistic), num(r.effect),
+              f"{num(r.ci_low)} a {num(r.ci_high)}" if r.ci_low is not None and not pd.isna(r.ci_low) else "",
+              f"{r.p_value:.2g}", ("**" if r.p_adjusted < alpha else "") + f"{r.p_adjusted:.2g}" +
+              ("**" if r.p_adjusted < alpha else ""), describe_details(r)]
+             for r in rows.itertuples()],
+        ))
+    return "\n".join(out)
 
 
 def main() -> None:
