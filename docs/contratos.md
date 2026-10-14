@@ -152,6 +152,13 @@ Definidos em `PaymentsAdapter.filters` (`ml/src/anomalygov_ml/sources/payments.p
 | `runs.job_id` | Liga as execuções de um job (nulo no modo `experiment`). Apagar o job apaga suas execuções e escores. |
 | `payments_display` | View com as colunas de exibição de cada pagamento (`<source>_display` é a convenção lida pelo backend). Nome e código de pessoa física são sempre nulos. `security_invoker = true`: respeita o RLS de quem consulta. |
 
+### `record_features` e `sources.feature_columns` (007)
+
+| Objeto | Descrição |
+|---|---|
+| `record_features` | `source`, `record_id`, `values` (float8[] na ordem de `sources.feature_columns`). Features dos registros da amostra publicada, calculadas no banco local sobre o ano inteiro (decisão 0005) e gravadas pela publicação, que substitui as anteriores da mesma base. |
+| `sources.feature_columns` | Nomes das features, na ordem de `record_features.values`. |
+
 ## Formato de `filters` e `params` dos jobs
 
 Validados pelo backend contra a definição em `sources` (`JobRequestValidator`). Todos os filtros são opcionais; filtros desconhecidos são rejeitados.
@@ -180,11 +187,13 @@ Exemplo (base `payments`):
 
 ## Processamento de um job (worker)
 
-1. Reserva: `SELECT ... FROM jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`, depois `status = 'running'`, `started_at = now()`.
-2. Seleciona os registros da amostra publicada que atendem aos filtros. Se passarem de `EXPLORATION_MAX_ROWS`, sorteia esse número (semente registrada).
-3. Executa os três algoritmos sobre o recorte, com escalador ajustado no próprio recorte. As anomalias são **relativas ao recorte**.
-4. Grava uma linha em `runs` por algoritmo: `mode = 'exploration'`, `purpose = 'main'`, `experiment = 'exploration'`, `job_id`, `train_sample_id` e `scored_sample_id` = amostra principal publicada, `subset` = filtros do job, e os escores em `run_scores`.
-5. Conclui com `status = 'succeeded'`, `finished_at = now()` e `result`, ou `status = 'failed'`, `finished_at` e `error` (mensagem para o usuário, sem detalhes internos).
+Implementado em `ml/src/anomalygov_ml/worker.py` (decisão 0010): `python -m anomalygov_ml.worker --config experiments/configs/principal-2025.toml`, conectado a `SUPABASE_DATABASE_URL`.
+
+1. **Limpeza**, a cada ciclo: jobs em `running` há mais de `EXPLORATION_STALE_MINUTES` (padrão 30) viram `failed` ("processamento interrompido"). Jobs concluídos há mais de `EXPLORATION_RETENTION_HOURS` (padrão 24) são apagados, junto com suas execuções e escores.
+2. **Reserva:** `SELECT ... FROM jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`, depois `status = 'running'` e `started_at = now()`.
+3. **Recorte:** registros de `<source>_display` que atendem aos filtros e têm features em `record_features`. Cada filtro corresponde à coluna de mesmo nome da view. Com menos de `EXPLORATION_MIN_ROWS` (padrão 100), o job falha com uma mensagem para o usuário. Com mais de `EXPLORATION_MAX_ROWS` (padrão 50.000), sorteia esse número com semente derivada do id do job.
+4. **Execução:** os três algoritmos com a configuração principal do experimento (`--config`), sobre as features do recorte com `RobustScaler` ajustado no próprio recorte. As anomalias são **relativas ao recorte**.
+5. **Gravação, numa única transação:** uma linha em `runs` por algoritmo (`mode = 'exploration'`, `purpose = 'main'`, `experiment = 'exploration'`, `job_id`, `train_sample_id` e `scored_sample_id` = amostra principal publicada, `subset` = `{filters, sampled, sample_seed}`), os escores em `run_scores`, e o job com `status = 'succeeded'`, `finished_at` e `result`. Em erro, nada é gravado e o job fica `failed` com uma mensagem sem detalhes internos.
 
 `result` (jsonb):
 

@@ -3,49 +3,13 @@
 Skipped when DATABASE_URL is not set or the local database has no experiment yet.
 """
 
-import os
-from pathlib import Path
-
 import pytest
 
-psycopg = pytest.importorskip("psycopg")
-from psycopg.conninfo import make_conninfo  # noqa: E402
-
+pytest.importorskip("psycopg")
 from anomalygov_ml.publish import publish  # noqa: E402
 
-pytestmark = pytest.mark.skipif("DATABASE_URL" not in os.environ, reason="DATABASE_URL not set")
 
-MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
-TARGET_DB = "anomalygov_publish_test"
-
-
-@pytest.fixture
-def source():
-    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
-        yield conn
-
-
-@pytest.fixture
-def target(source):
-    source.execute(f"DROP DATABASE IF EXISTS {TARGET_DB}")
-    source.execute(f"CREATE DATABASE {TARGET_DB}")
-    try:
-        with psycopg.connect(make_conninfo(os.environ["DATABASE_URL"], dbname=TARGET_DB), autocommit=True) as conn:
-            for migration in sorted(MIGRATIONS.glob("*.sql")):
-                conn.execute(migration.read_text(encoding="utf-8"))
-            yield conn
-    finally:
-        source.execute(f"DROP DATABASE IF EXISTS {TARGET_DB}")
-
-
-def test_publish_is_complete_minimal_and_idempotent(source, target):
-    row = source.execute(
-        "SELECT experiment FROM runs WHERE purpose = 'main' GROUP BY experiment ORDER BY min(id) LIMIT 1"
-    ).fetchone()
-    if row is None:
-        pytest.skip("no experiment in the local database")
-    experiment = row[0]
-
+def test_publish_is_complete_minimal_and_idempotent(source, target, experiment):
     first = publish(source, target, experiment)
     second = publish(source, target, experiment)
 
@@ -59,6 +23,7 @@ def test_publish_is_complete_minimal_and_idempotent(source, target):
     assert first["payments"] == sample_size
     assert first["runs"] == n_runs
     assert first["run_scores"] == 3 * sample_size  # only the three main runs
+    assert first["record_features"] == sample_size
     assert second["payments"] == 0 and second["runs"] == 0 and second["run_scores"] == 0
 
     counts = target.execute(

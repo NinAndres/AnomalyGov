@@ -67,18 +67,19 @@ def insert_run(
     cur: psycopg.Cursor, experiment: str, config_sha256: str, purpose: str, algorithm: str,
     params: dict[str, Any], random_state: int | None, feature_columns: list[str], train_sample_id: int,
     scored_sample_id: int | None, n_train: int, n_scored: int, fit_seconds: float, score_seconds: float,
-    environment: dict[str, Any], subset: dict[str, Any] | None = None,
+    environment: dict[str, Any], subset: dict[str, Any] | None = None, mode: str = "experiment",
+    job_id: str | None = None,
 ) -> int:
     """Record one algorithm execution (AGENTS.md, section 7) and return its id."""
     cur.execute(
         """INSERT INTO runs (experiment, config_sha256, mode, purpose, algorithm, params, random_state,
                              feature_columns, train_sample_id, scored_sample_id, n_train, n_scored,
-                             fit_seconds, score_seconds, environment, subset)
-           VALUES (%s, %s, 'experiment', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                             fit_seconds, score_seconds, environment, subset, job_id)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
         (
-            experiment, config_sha256, purpose, algorithm, Jsonb(params), random_state, feature_columns,
+            experiment, config_sha256, mode, purpose, algorithm, Jsonb(params), random_state, feature_columns,
             train_sample_id, scored_sample_id, n_train, n_scored, fit_seconds, score_seconds, Jsonb(environment),
-            Jsonb(subset) if subset is not None else None,
+            Jsonb(subset) if subset is not None else None, job_id,
         ),
     )
     return cur.fetchone()[0]

@@ -108,6 +108,11 @@ def publish(source: psycopg.Connection, target: psycopg.Connection, experiment: 
         ("hypothesis_units", f"SELECT {COLUMNS['hypothesis_units']} FROM hypothesis_units WHERE experiment = {quoted}"),
         ("hypothesis_tests", f"SELECT {COLUMNS['hypothesis_tests']} FROM hypothesis_tests WHERE experiment = {quoted}"),
     ]
+    # Features depend on the whole year, which only exists in the source database (decision 0005).
+    adapter = ADAPTERS[source_name]
+    sample_ids = [row[0] for row in source.execute(in_sample + " ORDER BY payment_id").fetchall()]
+    features = adapter.load_features(source, sample_ids)[list(adapter.feature_columns)]
+
     written = {}
     with target.transaction():
         # Runs re-executed locally get new ids: drop the stale ones (cascades to their scores and metrics).
@@ -118,14 +123,23 @@ def publish(source: psycopg.Connection, target: psycopg.Connection, experiment: 
             target.execute(f"DELETE FROM {table} WHERE experiment = %s", (experiment,))
         for table, select_sql in steps:
             written[table] = transfer(source, target, table, select_sql)
-        definition = ADAPTERS[source_name].describe(target)
+        definition = adapter.describe(target)
         target.execute(
-            """INSERT INTO sources (name, label, filters, display_columns) VALUES (%s, %s, %s, %s)
+            """INSERT INTO sources (name, label, filters, display_columns, feature_columns) VALUES (%s, %s, %s, %s, %s)
                ON CONFLICT (name) DO UPDATE SET label = EXCLUDED.label, filters = EXCLUDED.filters,
-                   display_columns = EXCLUDED.display_columns, updated_at = now()""",
-            (definition["name"], definition["label"], Jsonb(definition["filters"]), Jsonb(definition["display_columns"])),
+                   display_columns = EXCLUDED.display_columns, feature_columns = EXCLUDED.feature_columns,
+                   updated_at = now()""",
+            (definition["name"], definition["label"], Jsonb(definition["filters"]),
+             Jsonb(definition["display_columns"]), Jsonb(list(adapter.feature_columns))),
         )
         written["sources"] = 1
+        # The features of the published sample replace the previous ones of this source.
+        target.execute("DELETE FROM record_features WHERE source = %s", (source_name,))
+        with target.cursor() as cur, cur.copy('COPY record_features (source, record_id, "values") FROM STDIN') as copy:
+            copy.set_types(["text", "int8", "float8[]"])
+            for record_id, values in zip(features.index, features.to_numpy()):
+                copy.write_row((source_name, int(record_id), [float(v) for v in values]))
+        written["record_features"] = len(features)
         for table in IDENTITY_TABLES:
             # Keep the target's own inserts (e.g. exploration runs) after the published ids.
             target.execute(
