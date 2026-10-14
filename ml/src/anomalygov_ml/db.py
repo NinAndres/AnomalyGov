@@ -1,5 +1,6 @@
 import io
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 
 import pandas as pd
 import psycopg
@@ -15,10 +16,17 @@ def read_query(conn: psycopg.Connection, query: str, **read_csv_kwargs) -> pd.Da
     return pd.read_csv(buffer, **read_csv_kwargs)
 
 
-def create_id_table(conn: psycopg.Connection, name: str, ids: Iterable[int]) -> None:
-    """Create a temporary table holding the given ids, dropped at the end of the current transaction."""
-    with conn.cursor() as cur:
-        cur.execute(f"CREATE TEMP TABLE {name} (id bigint PRIMARY KEY) ON COMMIT DROP")
+@contextmanager
+def id_table(conn: psycopg.Connection, name: str, ids: Iterable[int]) -> Iterator[None]:
+    """Temporary table holding the given ids, dropped on exit.
+
+    The table is dropped explicitly because, when the connection is already inside a transaction,
+    conn.transaction() is only a savepoint and ON COMMIT DROP would not fire.
+    """
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute(f"CREATE TEMP TABLE {name} (id bigint PRIMARY KEY)")
         with cur.copy(f"COPY {name} (id) FROM STDIN") as copy:
             for id_ in ids:
                 copy.write_row((int(id_),))
+        yield
+        cur.execute(f"DROP TABLE {name}")

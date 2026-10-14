@@ -29,3 +29,7 @@ def test_features_for_a_small_sample(conn):
     assert np.isfinite(features.to_numpy()).all()
     assert features["favored_months"].between(1, 12).all()
     assert (features["log_amount"] > 0).all()  # zero and negative amounts are excluded at ingestion
+
+    # The same connection must support repeated calls (one per sample in an experiment).
+    again = adapter.load_features(conn, sample["id"].tolist()[:50])
+    assert again.equals(features.iloc[:50])

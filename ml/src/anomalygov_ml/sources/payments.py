@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import psycopg
 
-from anomalygov_ml.db import create_id_table, read_query
+from anomalygov_ml.db import id_table, read_query
 from anomalygov_ml.sources.base import FilterSpec, SourceAdapter
 
 RAW_COLUMNS = {
@@ -155,8 +155,7 @@ class PaymentsAdapter(SourceAdapter):
         )
 
     def load_features(self, conn: psycopg.Connection, ids: list[int]) -> pd.DataFrame:
-        with conn.transaction():
-            create_id_table(conn, "feature_ids", ids)
+        with id_table(conn, "feature_ids", ids):
             history = read_query(
                 conn,
                 """SELECT p.id, p.favored_id, p.reference_month, p.management_unit_code, p.amount
