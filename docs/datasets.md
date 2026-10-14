@@ -72,7 +72,8 @@ Aplicadas na ingestão (decisão 0003). Cada linha conta só no primeiro critér
 | `special` | 12.007 | 3 | 11,25 |
 
 - No Postgres, a base completa ocupa 1,33 GB (`payments` 1.034 MB, `favored` 290 MB).
-- **Em aberto:** `management_unit` (transferências entre unidades gestoras federais) tem só 0,25% das linhas, mas 45% do valor total, inclusive unidades do Tesouro (ex.: 170600, de controle da dívida pública). Decidir se entra no experimento.
+- `management_unit` (transferências entre unidades gestoras federais) é **mantido** (decisão 0003). Tem só 0,25% das linhas, mas 45% do valor total, inclusive unidades do Tesouro (ex.: 170600, de controle da dívida pública).
+- A base completa fica apenas no Postgres local; o Supabase recebe só a amostra do experimento (decisão 0004).
 
 ## Arquivos descartados
 

@@ -24,4 +24,4 @@ Cada linha é contada só no primeiro critério que atende. As contagens por cri
 
 - As exclusões valem para os modos `experiment` e `exploration`.
 - O arquivo bruto e o SHA-256 dele continuam registrados, então o processamento é reproduzível. Mudar o critério exige reingerir os arquivos.
-- Favorecidos do tipo `management_unit` (transferências entre unidades gestoras federais, inclusive unidades do Tesouro como a 170600, de controle da dívida pública) **não** foram excluídos. É uma questão em aberto.
+- Favorecidos do tipo `management_unit` (transferências entre unidades gestoras federais, inclusive unidades do Tesouro como a 170600, de controle da dívida pública) são **mantidos**. Em 2025 são 0,25% das linhas, mas 45% do valor total. A análise deve levar em conta que esses valores extremos tendem a ser sinalizados.
