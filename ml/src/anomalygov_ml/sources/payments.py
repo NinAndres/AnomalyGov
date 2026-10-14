@@ -1,8 +1,11 @@
 import hashlib
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import psycopg
 
+from anomalygov_ml.db import create_id_table, read_query
 from anomalygov_ml.sources.base import FilterSpec, SourceAdapter
 
 RAW_COLUMNS = {
@@ -31,6 +34,16 @@ FAVORED_TYPE_PATTERNS = (
 
 MISSING_MARKERS = {"-1", "Sem informação"}
 
+# Decision 0005. All statistics are computed over the whole of 2025, not only over the sample.
+FEATURE_COLUMNS = (
+    "log_amount",  # ln(1 + amount)
+    "amount_vs_ug",  # log_amount minus the median log_amount of the paying management unit
+    "amount_vs_favored",  # robust z-score of log_amount within the favored's own records
+    "favored_months",  # distinct months in which the favored received
+    "favored_ug_count",  # ln(1 + distinct management units that paid the favored)
+)
+MAD_OFFSET = 0.1  # keeps amount_vs_favored finite when the favored always receives the same amount
+
 
 def classify_favored(codes: pd.Series) -> pd.Series:
     types = pd.Series("other", index=codes.index)
@@ -40,6 +53,25 @@ def classify_favored(codes: pd.Series) -> pd.Series:
         types[match] = favored_type
         unmatched &= ~match
     return types
+
+
+def compute_features(history: pd.DataFrame, ug_log_median: pd.Series) -> pd.DataFrame:
+    """Build the feature matrix from payment rows.
+
+    `history` must hold every payment (id, favored_id, reference_month, management_unit_code, amount)
+    of each favored involved; `ug_log_median` maps management_unit_code to its median log_amount.
+    Returns one row per payment id, with FEATURE_COLUMNS.
+    """
+    h = history.copy()
+    h["log_amount"] = np.log1p(h["amount"].astype(float))
+    by_favored = h.groupby("favored_id")
+    median = by_favored["log_amount"].transform("median")
+    mad = (h["log_amount"] - median).abs().groupby(h["favored_id"]).transform("median")
+    h["amount_vs_favored"] = (h["log_amount"] - median) / (mad + MAD_OFFSET)
+    h["amount_vs_ug"] = h["log_amount"] - h["management_unit_code"].map(ug_log_median)
+    h["favored_months"] = by_favored["reference_month"].transform("nunique")
+    h["favored_ug_count"] = np.log1p(by_favored["management_unit_code"].transform("nunique"))
+    return h.set_index("id")[list(FEATURE_COLUMNS)]
 
 
 def favored_key(code: str, name: str, favored_type: str) -> str:
@@ -68,6 +100,8 @@ class PaymentsAdapter(SourceAdapter):
         "municipality",
         "amount",
     )
+    strata_columns = ("reference_month", "favored_type")
+    feature_columns = FEATURE_COLUMNS
 
     def parse(self, path: Path) -> pd.DataFrame:
         df = pd.read_csv(path, sep=";", encoding="latin-1", dtype=str, keep_default_na=False)
@@ -112,3 +146,33 @@ class PaymentsAdapter(SourceAdapter):
             counts[reason] = int(removed.sum())
             keep &= ~removed
         return df[keep].reset_index(drop=True), counts
+
+    def load_population(self, conn: psycopg.Connection) -> pd.DataFrame:
+        return read_query(
+            conn,
+            "SELECT p.id, p.reference_month, f.favored_type FROM payments p JOIN favored f ON f.id = p.favored_id",
+            parse_dates=["reference_month"],
+        )
+
+    def load_features(self, conn: psycopg.Connection, ids: list[int]) -> pd.DataFrame:
+        with conn.transaction():
+            create_id_table(conn, "feature_ids", ids)
+            history = read_query(
+                conn,
+                """SELECT p.id, p.favored_id, p.reference_month, p.management_unit_code, p.amount
+                   FROM payments p
+                   WHERE p.favored_id IN (SELECT s.favored_id FROM payments s JOIN feature_ids i ON i.id = s.id)""",
+                dtype={"management_unit_code": str},
+                parse_dates=["reference_month"],
+            )
+            ug_log_median = read_query(
+                conn,
+                """SELECT management_unit_code,
+                          percentile_cont(0.5) WITHIN GROUP (ORDER BY ln(1 + amount::float8)) AS log_median
+                   FROM payments
+                   WHERE management_unit_code IN
+                         (SELECT s.management_unit_code FROM payments s JOIN feature_ids i ON i.id = s.id)
+                   GROUP BY management_unit_code""",
+                dtype={"management_unit_code": str},
+            ).set_index("management_unit_code")["log_median"]
+        return compute_features(history, ug_log_median).loc[list(ids)]
