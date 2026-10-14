@@ -89,3 +89,23 @@ def test_describe_reports_rows_and_full_month_period(csv_path):
     assert info.row_count == 7
     assert (info.period_start, info.period_end) == (date(2025, 1, 1), date(2025, 1, 31))
     assert len(info.sha256) == 64
+
+
+def test_exclude_removes_treasury_negative_and_zero(csv_path):
+    adapter = PaymentsAdapter()
+    df = adapter.parse(csv_path)
+    df.loc[df["favored_type"] == "foreign", "amount"] = "0.0000"
+    kept, excluded = adapter.exclude(df)
+    assert excluded == {"treasury_operation": 1, "negative_amount": 1, "zero_amount": 1}
+    assert len(kept) == len(df) - 3
+    assert set(kept["favored_type"]) == {"individual", "management_unit", "special"}
+    assert (pd.to_numeric(kept["amount"]) > 0).all()
+
+
+def test_exclude_counts_each_row_once(csv_path):
+    adapter = PaymentsAdapter()
+    df = adapter.parse(csv_path)
+    df.loc[df["favored_type"] == "other", "amount"] = "-1.00"  # treasury and negative at once
+    _, excluded = adapter.exclude(df)
+    assert excluded["treasury_operation"] == 1
+    assert sum(excluded.values()) == 2

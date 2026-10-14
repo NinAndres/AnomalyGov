@@ -24,3 +24,7 @@ class SourceAdapter(ABC):
     @abstractmethod
     def parse(self, path: Path) -> pd.DataFrame:
         """Read a raw file and return it normalized for loading into the database."""
+
+    def exclude(self, df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+        """Drop records outside the project scope. Returns the kept rows and the count removed per reason."""
+        return df, {}

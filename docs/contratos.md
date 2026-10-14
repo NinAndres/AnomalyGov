@@ -6,7 +6,7 @@ Documento de referência dos contratos entre backend (C#) e worker (Python). Tod
 
 Migrations aplicadas em ordem numérica a partir de `db/migrations/`.
 
-### `dataset_files` (001)
+### `dataset_files` (001, 002)
 
 Um registro por arquivo bruto ingerido. `sha256` é único: reingerir o mesmo arquivo é ignorado.
 
@@ -16,7 +16,9 @@ Um registro por arquivo bruto ingerido. `sha256` é único: reingerir o mesmo ar
 | `source` | text | Nome do adaptador (`payments`) |
 | `file_name` | text | Nome do arquivo de origem |
 | `sha256` | char(64) | Hash do arquivo bruto |
-| `row_count` | integer | Linhas de dados (sem cabeçalho) |
+| `row_count` | integer | Linhas de dados do arquivo bruto (sem cabeçalho) |
+| `loaded_row_count` | integer | Linhas gravadas em `payments` após as exclusões (002) |
+| `excluded_rows` | jsonb | Linhas removidas por critério, ex.: `{"treasury_operation": 295, "negative_amount": 3919, "zero_amount": 5953}` (002) |
 | `period_start`, `period_end` | date | Primeiro e último dia do período coberto |
 | `ingested_at` | timestamptz | Momento da ingestão |
 

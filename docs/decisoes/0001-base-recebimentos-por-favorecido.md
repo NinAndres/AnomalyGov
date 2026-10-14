@@ -14,5 +14,5 @@ Usar a base **Recebimentos de Recursos por Favorecido** (arquivos mensais `AAAAM
 ## Consequências
 
 - A unidade de análise é o **total mensal recebido por favorecido, unidade gestora e localidade**, e não o pagamento individual. O artigo deve descrever a anomalia nessa granularidade.
-- O volume é de cerca de 554 mil linhas por mês (estimativa de 6,6 milhões em 2025), acima da previsão inicial de 4 milhões.
-- A base mistura favorecidos de naturezas muito diferentes (pessoas físicas, empresas, unidades gestoras, exterior, operações do Tesouro). O critério de seleção para o experimento ainda está pendente (ver `docs/datasets.md`).
+- O volume de 2025 é de 8.228.227 linhas (de 492 mil a 844 mil por mês), o dobro da previsão inicial de 4 milhões.
+- A base mistura favorecidos de naturezas muito diferentes (pessoas físicas, empresas, unidades gestoras, exterior, operações do Tesouro). As operações do Tesouro, os valores negativos e os zeros são excluídos na ingestão (decisão 0003).

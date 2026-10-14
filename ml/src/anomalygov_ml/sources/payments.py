@@ -96,3 +96,19 @@ class PaymentsAdapter(SourceAdapter):
         individual = df["favored_type"] == "individual"
         df.loc[individual, ["favored_code", "favored_name"]] = None
         return df
+
+    def exclude(self, df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+        # A row is counted under the first reason it matches, so the counts add up to the total removed.
+        amount = pd.to_numeric(df["amount"])
+        rules = (
+            ("treasury_operation", df["favored_type"] == "other"),
+            ("negative_amount", amount < 0),
+            ("zero_amount", amount == 0),
+        )
+        keep = pd.Series(True, index=df.index)
+        counts = {}
+        for reason, match in rules:
+            removed = keep & match
+            counts[reason] = int(removed.sum())
+            keep &= ~removed
+        return df[keep].reset_index(drop=True), counts

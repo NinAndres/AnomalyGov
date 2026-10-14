@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 import psycopg
+from psycopg.types.json import Jsonb
 
 from anomalygov_ml.sources.base import SourceAdapter
 from anomalygov_ml.sources.payments import PaymentsAdapter
@@ -69,10 +70,13 @@ def ingest_file(conn: psycopg.Connection, adapter: SourceAdapter, path: Path) ->
 
         df = adapter.parse(path)
         info = describe(df, sha256)
+        df, excluded = adapter.exclude(df)
         cur.execute(
-            """INSERT INTO dataset_files (source, file_name, sha256, row_count, period_start, period_end)
-               VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
-            (adapter.name, path.name, info.sha256, info.row_count, info.period_start, info.period_end),
+            """INSERT INTO dataset_files
+                   (source, file_name, sha256, row_count, loaded_row_count, excluded_rows, period_start, period_end)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (adapter.name, path.name, info.sha256, info.row_count, len(df), Jsonb(excluded),
+             info.period_start, info.period_end),
         )
         file_id = cur.fetchone()[0]
 
@@ -109,8 +113,8 @@ def ingest_file(conn: psycopg.Connection, adapter: SourceAdapter, path: Path) ->
                FROM stage s JOIN favored f ON f.key_hash = decode(s.favored_hash, 'hex')""",
             (file_id,),
         )
-        if cur.rowcount != info.row_count:
-            raise RuntimeError(f"{path.name}: {cur.rowcount} linhas gravadas, esperado {info.row_count}")
+        if cur.rowcount != len(df):
+            raise RuntimeError(f"{path.name}: {cur.rowcount} linhas gravadas, esperado {len(df)}")
         return file_id
 
 
