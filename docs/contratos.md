@@ -59,6 +59,50 @@ Fato: total recebido no mês por favorecido, unidade gestora e localidade.
 | `municipality` | text | `NULL` se sem informação |
 | `amount` | numeric(18,2) | Valor recebido (pode ser negativo) |
 
+### `samples` e `sample_records` (003)
+
+Amostras estratificadas (decisão 0005). Uma amostra é identificada pelo desenho: base, semente, total, piso, colunas de estrato e arquivos da base (`dataset_file_ids`). Reexecutar o mesmo desenho reaproveita a amostra gravada.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `samples.id` | integer | Identificador |
+| `source` | text | Adaptador (`payments`) |
+| `seed`, `total`, `floor` | integer | Semente, tamanho proporcional e piso por estrato |
+| `strata` | text[] | Colunas de estrato (`reference_month`, `favored_type`) |
+| `dataset_file_ids` | integer[] | Arquivos da base no momento do sorteio |
+| `population_size`, `sample_size` | integer | Tamanho da população e da amostra |
+| `sample_records.payment_id` | bigint | FK `payments` |
+| `sample_records.weight` | double precision | Peso amostral (tamanho do estrato / sorteados) |
+
+### `runs` (003)
+
+Uma linha por execução de algoritmo (AGENTS.md, seção 7).
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `id` | integer | Identificador |
+| `experiment`, `config_sha256` | text, char(64) | Nome e hash do arquivo de configuração em `ml/experiments/configs/` |
+| `mode` | text | `experiment` ou `exploration` |
+| `purpose` | text | `main`, `parameter`, `data_stability`, `scalability` ou `artifact` (decisão 0006) |
+| `algorithm` | text | `isolation_forest`, `lof` ou `one_class_svm` |
+| `params` | jsonb | Hiperparâmetros completos efetivos (inclui `n_neighbors` derivado e `max_duplicate_group` no LOF) |
+| `random_state` | integer | Semente do algoritmo (nula quando determinístico) |
+| `feature_columns` | text[] | Features usadas, na ordem da matriz |
+| `train_sample_id` | integer | Amostra de treino (FK `samples`) |
+| `scored_sample_id` | integer | Amostra pontuada; nula na escalabilidade (só tempos) |
+| `n_train`, `n_scored` | integer | Registros de treino e pontuados |
+| `fit_seconds`, `score_seconds` | double precision | Tempos. No LOF sem `novelty`, a pontuação acontece no treino. |
+| `environment` | jsonb | Versões de Python, scikit-learn, numpy, pandas, scipy, máquina e `n_jobs` |
+
+### `run_scores` (003)
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `run_id` | integer | FK `runs` |
+| `payment_id` | bigint | FK `payments` |
+| `raw_score` | double precision | Escore bruto (maior = mais anômalo) |
+| `normalized_score` | real | Posto percentual em (0, 1]; sinalizado a `p` quando `raw_score` ≥ quantil `1 − p` da execução |
+
 ## Filtros disponíveis por base
 
 Definidos em `PaymentsAdapter.filters` (`ml/src/anomalygov_ml/sources/payments.py`):

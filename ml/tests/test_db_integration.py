@@ -33,3 +33,82 @@ def test_features_for_a_small_sample(conn):
     # The same connection must support repeated calls (one per sample in an experiment).
     again = adapter.load_features(conn, sample["id"].tolist()[:50])
     assert again.equals(features.iloc[:50])
+
+
+TINY_CONFIG = """
+name = "teste-integracao"
+source = "payments"
+p = [0.01, 0.05]
+
+[sample]
+total = 300
+floor = 2
+seed = 7
+
+[main.isolation_forest]
+n_estimators = 10
+max_samples = 64
+random_state = 0
+
+[main.lof]
+neighbors_margin = 5
+
+[main.one_class_svm]
+nu = 0.05
+gamma = "scale"
+
+[parameter.isolation_forest]
+n_estimators = [5, 10]
+
+[artifact.lof]
+n_neighbors = [3]
+
+[data_stability]
+seeds = [8]
+
+[scalability]
+sizes = [200, 400]
+repetitions = 1
+lof_max_size = 300
+"""
+
+
+def test_tiny_experiment_end_to_end(tmp_path):
+    from anomalygov_ml.experiment import PARTS, Experiment
+
+    config = tmp_path / "tiny.toml"
+    config.write_text(TINY_CONFIG, encoding="utf-8")
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.transaction(force_rollback=True):
+        Experiment(conn, config).run(PARTS)
+        runs = dict(conn.execute(
+            "SELECT purpose, count(*) FROM runs WHERE experiment = 'teste-integracao' GROUP BY purpose"
+        ).fetchall())
+        # parameter: n_estimators=5 only (10 is the main one); scalability: LOF skipped above 300 rows.
+        assert runs == {"main": 3, "parameter": 1, "artifact": 1, "data_stability": 3, "scalability": 5}
+
+        main_scores = conn.execute(
+            """SELECT r.algorithm, count(s.*), min(s.normalized_score), max(s.normalized_score),
+                      count(*) FILTER (WHERE sr.payment_id IS NULL)
+               FROM runs r JOIN run_scores s ON s.run_id = r.id
+               LEFT JOIN sample_records sr ON sr.sample_id = r.scored_sample_id AND sr.payment_id = s.payment_id
+               WHERE r.experiment = 'teste-integracao' AND r.purpose = 'main' GROUP BY r.algorithm"""
+        ).fetchall()
+        sample_size = conn.execute(
+            "SELECT sample_size FROM samples s JOIN runs r ON r.train_sample_id = s.id "
+            "WHERE r.experiment = 'teste-integracao' AND r.purpose = 'main' LIMIT 1"
+        ).fetchone()[0]
+        for algorithm, n, low, high, outside_sample in main_scores:
+            assert n == sample_size, algorithm
+            assert 0 < low and high == 1.0
+            assert outside_sample == 0
+
+        stability = conn.execute(
+            """SELECT bool_and(train_sample_id <> scored_sample_id),
+                      bool_and(params->>'novelty' = 'true') FILTER (WHERE algorithm = 'lof')
+               FROM runs WHERE experiment = 'teste-integracao' AND purpose = 'data_stability'"""
+        ).fetchone()
+        assert stability == (True, True)
+        assert conn.execute(
+            "SELECT count(*) FROM run_scores s JOIN runs r ON r.id = s.run_id "
+            "WHERE r.experiment = 'teste-integracao' AND r.purpose = 'scalability'"
+        ).fetchone()[0] == 0

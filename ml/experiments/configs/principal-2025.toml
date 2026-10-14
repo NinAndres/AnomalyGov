@@ -1,0 +1,52 @@
+# Experimento principal do artigo (decisões 0005 e 0006).
+# Executar: python -m anomalygov_ml.experiment experiments/configs/principal-2025.toml
+
+name = "principal-2025"
+source = "payments"
+p = [0.01, 0.02, 0.05]
+
+[sample]
+total = 50000
+floor = 200
+seed = 42
+
+# Configuração principal de cada algoritmo.
+[main.isolation_forest]
+n_estimators = 1000
+max_samples = 4096
+random_state = 0
+
+[main.lof]
+neighbors_margin = 50
+
+[main.one_class_svm]
+nu = 0.01
+gamma = "scale"
+
+# Estabilidade frente aos parâmetros: produto cartesiano por algoritmo.
+# Combinações iguais à principal não são executadas de novo.
+[parameter.isolation_forest]
+n_estimators = [200, 500, 1000]
+max_samples = [256, 1024, 4096]
+
+[parameter.lof]
+neighbors_margin = [50, 200, 500]
+
+[parameter.one_class_svm]
+nu = [0.005, 0.01, 0.05]
+gamma = ["scale", 0.1, 1.0]
+
+# Demonstração do artefato do LOF com vetores duplicados (fora das métricas comparativas).
+[artifact.lof]
+n_neighbors = [20, 50]
+
+# Estabilidade frente aos dados: treina em cada amostra e pontua a amostra principal.
+[data_stability]
+seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+# Escalabilidade: só tempos. Amostras com sementes 1001, 1002, ... por repetição e piso
+# proporcional ao tamanho (floor * size / total), para caber nos tamanhos menores.
+[scalability]
+sizes = [5000, 10000, 25000, 50000, 100000, 200000]
+repetitions = 3
+lof_max_size = 50000

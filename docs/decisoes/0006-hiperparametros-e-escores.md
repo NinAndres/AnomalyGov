@@ -7,7 +7,7 @@ Medições feitas na amostra principal da decisão 0005: semente 42, 56.768 regi
 
 ## 1. Escores e limiar
 
-| Item | Proposta |
+| Item | Definição |
 |---|---|
 | Escore bruto (maior = mais anômalo) | Isolation Forest: `-score_samples(X)`. LOF: `-negative_outlier_factor_`. One-Class SVM: `-score_samples(X)`. |
 | Escore normalizado | Posto percentual do escore bruto dentro da execução, em [0, 1] (empates recebem o posto médio). Os escores brutos têm escalas incomparáveis (no LOF, por exemplo, vão de ~1 a 28). |
