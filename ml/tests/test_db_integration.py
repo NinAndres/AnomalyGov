@@ -112,3 +112,20 @@ def test_tiny_experiment_end_to_end(tmp_path):
             "SELECT count(*) FROM run_scores s JOIN runs r ON r.id = s.run_id "
             "WHERE r.experiment = 'teste-integracao' AND r.purpose = 'scalability'"
         ).fetchone()[0] == 0
+
+        from anomalygov_ml import report
+
+        data = report.load(conn, "teste-integracao")
+        run_metrics, run_comparisons = report.compute_tables(data)
+        report.store_tables(conn, run_metrics, run_comparisons)
+        report.store_tables(conn, run_metrics, run_comparisons)  # idempotent
+        # 8 runs scored the main sample (3 main, 1 parameter, 1 artifact, 3 data stability), 3 values of p.
+        assert conn.execute(
+            "SELECT count(*) FROM run_metrics m JOIN runs r ON r.id = m.run_id WHERE r.experiment = 'teste-integracao'"
+        ).fetchone()[0] == 8 * 3
+        # 3 pairs among main runs + 5 non-main runs compared with their main run.
+        assert len(run_comparisons) == (3 + 5) * 3
+        text = report.render(data, run_metrics, run_comparisons)
+        for heading in ("Tempo de execução", "Proporção", "Concordância", "Estabilidade", "Características",
+                        "Interpretabilidade", "artefato do LOF"):
+            assert heading in text

@@ -103,6 +103,20 @@ Uma linha por execução de algoritmo (AGENTS.md, seção 7).
 | `raw_score` | double precision | Escore bruto (maior = mais anômalo) |
 | `normalized_score` | real | Posto percentual em (0, 1]; sinalizado a `p` quando `raw_score` ≥ quantil `1 − p` da execução |
 
+### `run_metrics` e `run_comparisons` (004)
+
+Calculadas por `python -m anomalygov_ml.report <experimento>` (decisão 0007) para as execuções que pontuaram a amostra principal. Reprocessar substitui as linhas das mesmas execuções.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `run_metrics.run_id`, `p` | integer, numeric(4,3) | Execução e limiar |
+| `flagged_count` | integer | Registros sinalizados (com empates no limiar) |
+| `flagged_share` | double precision | Proporção na amostra |
+| `weighted_flagged_share` | double precision | Proporção ponderada pelos pesos amostrais (estimativa populacional) |
+| `run_comparisons.run_a`, `run_b`, `p` | integer, integer, numeric(4,3) | Par de execuções (`run_a < run_b`) e limiar |
+| `jaccard` | double precision | Jaccard dos sinalizados no limiar `p` |
+| `spearman` | double precision | Correlação de Spearman dos escores (não depende de `p`) |
+
 ## Filtros disponíveis por base
 
 Definidos em `PaymentsAdapter.filters` (`ml/src/anomalygov_ml/sources/payments.py`):
