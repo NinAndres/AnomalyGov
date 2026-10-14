@@ -81,6 +81,10 @@ Implementado em `ml/src/anomalygov_ml/hypotheses.py`, com a configuração em `m
 - Reexecutar substitui as execuções e os resultados de hipóteses anteriores do mesmo experimento.
 - Os resultados entram na seção 7 do relatório em `docs/resultados/`.
 
+## Correção durante a implementação
+
+Na primeira execução, a **retenção** da H1c comparava os sinalizados nos registros não substituídos usando o limiar `p` calculado sobre a célula inteira manipulada. Como as cópias do registro típico nunca são sinalizadas, isso limitava o Jaccard a cerca de `1 − fração`, qualquer que fosse o algoritmo: o Isolation Forest aparecia com exatamente 0,500 em 50%. A retenção (e, por consistência, a estabilidade por subamostra) passou a reaplicar o limiar `p` dentro do mesmo conjunto de registros nos dois lados da comparação. Só a H1 foi reexecutada.
+
 ## Situação da revisão (2026-10-14)
 
 | Ponto | Situação |

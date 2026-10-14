@@ -188,8 +188,14 @@ def run_h2(ctx: Context) -> None:
 
 def cell_indicators(ctx: Context, Xc: np.ndarray, subset: dict, purpose: str, rng: np.random.Generator,
                     with_stability: bool) -> tuple[dict[str, float], dict[str, np.ndarray]]:
+    """Agreement (and optionally subsample stability) of the algorithms in one cell; also returns the scores.
+
+    Comparisons on a subset of rows always re-apply the top-p threshold within that subset, so that both
+    sides flag the same number of rows and the Jaccard has no mechanical ceiling.
+    """
     p, cfg = ctx.config["p"], ctx.config["h1"]
-    flags = {alg: metrics.flagged(fit_score(ctx, purpose, alg, Xc, subset, [None])[0], p) for alg in ALGORITHMS}
+    scores = {alg: fit_score(ctx, purpose, alg, Xc, subset, [None])[0] for alg in ALGORITHMS}
+    flags = {alg: metrics.flagged(s, p) for alg, s in scores.items()}
     measures = {f"jaccard_{SHORT[a]}_{SHORT[b]}": metrics.jaccard(flags[a], flags[b]) for a, b in PAIRS}
     if with_stability:
         size = round(cfg["subsample_fraction"] * len(Xc))
@@ -199,9 +205,9 @@ def cell_indicators(ctx: Context, Xc: np.ndarray, subset: dict, purpose: str, rn
                 rows = np.sort(rng.choice(len(Xc), size=size, replace=False))
                 sub_subset = {**subset, "subsample": repetition, "fraction": cfg["subsample_fraction"]}
                 sub_scores = fit_score(ctx, "h1_subsample", alg, Xc[rows], sub_subset, [None])[0]
-                values.append(metrics.jaccard(metrics.flagged(sub_scores, p), flags[alg][rows]))
+                values.append(metrics.jaccard(metrics.flagged(sub_scores, p), metrics.flagged(scores[alg][rows], p)))
             measures[f"stability_{SHORT[alg]}"] = float(np.mean(values))
-    return measures, flags
+    return measures, scores
 
 
 def atypicality(ctx: Context, Xc: np.ndarray) -> dict[str, float]:
@@ -241,12 +247,16 @@ def run_h1(ctx: Context) -> None:
             Xm = Xc.copy()
             Xm[replaced] = typical
             subset = {"month": int(m), "favored_type": h1["manipulation_type"], "duplicate_fraction": fraction}
-            measures, flags = cell_indicators(ctx, Xm, subset, "h1_manipulation", rng, with_stability=False)
+            measures, scores = cell_indicators(ctx, Xm, subset, "h1_manipulation", rng, with_stability=False)
             kept = np.setdiff1d(np.arange(len(Xc)), replaced)
             if baseline is None:
-                baseline = flags
+                baseline = scores
+            p = cfg["p"]
             for alg in ALGORITHMS:
-                measures[f"retention_{SHORT[alg]}"] = metrics.jaccard(flags[alg][kept], baseline[alg][kept])
+                # Threshold within the kept rows on both sides: the copies are never flagged, so thresholding over
+                # the whole manipulated cell would cap the Jaccard at about 1 - fraction regardless of the algorithm.
+                measures[f"retention_{SHORT[alg]}"] = metrics.jaccard(
+                    metrics.flagged(scores[alg][kept], p), metrics.flagged(baseline[alg][kept], p))
             measures["duplicate_share"] = atypicality(ctx, Xm)["duplicate_share"]
             manipulation_units.append((subset, measures))
             manipulation_rows.append({**subset, **measures})

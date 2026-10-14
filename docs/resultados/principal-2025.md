@@ -255,6 +255,82 @@ Taxa = proporção ponderada de registros do tipo que foram sinalizados.
 
 </details>
 
+## 7. Hipóteses (decisão 0008)
+
+p ajustado pela correção de Holm dentro de cada família; significativo quando p ajustado < 0,05. Efeito: diferença média dos Jaccard (H2, com IC 95% por bootstrap em blocos de meses), correlação bisserial de postos (H1a), Spearman (H1b) ou W de Kendall (H1c). As medianas descrevem os indicadores.
+
+
+### H2: Isolation Forest × LOF entre meses (teste unilateral: IF mais estável)
+
+2 de 3 testes significativos.
+
+| Variável | n | Teste | Estatística | Efeito | IC 95% | p | p ajustado | Medianas |
+|---|---|---|---|---|---|---|---|---|
+| `jaccard_if_minus_lof_p01` | 132 | wilcoxon_greater | 8.085,000 | 0,203 | 0,163 a 0,242 | 2.8e-20 | **5.7e-20** | IF 0,677; outro 0,481; ruído de semente do IF 0,886 |
+| `jaccard_if_minus_lof_p05` | 132 | wilcoxon_greater | 8.778,000 | 0,399 | 0,373 a 0,424 | 1e-23 | **3.1e-23** | IF 0,788; outro 0,375; ruído de semente do IF 0,962 |
+| `drift_vs_jaccard_if_minus_lof_p01` | 132 | spearman_permutation | 0,145 | 0,145 |  | 0.097 | 0.097 |  |
+
+### Contexto da H2: Isolation Forest × One-Class SVM (bilateral)
+
+3 de 3 testes significativos.
+
+| Variável | n | Teste | Estatística | Efeito | IC 95% | p | p ajustado | Medianas |
+|---|---|---|---|---|---|---|---|---|
+| `jaccard_if_minus_ocsvm_p01` | 132 | wilcoxon_two-sided | 3,000 | 0,302 | 0,264 a 0,337 | 4.8e-23 | **9.6e-23** | IF 0,677; outro 0,373; ruído de semente do IF 0,886 |
+| `jaccard_if_minus_ocsvm_p05` | 132 | wilcoxon_two-sided | 0,000 | 0,364 | 0,339 a 0,399 | 2.1e-23 | **6.3e-23** | IF 0,788; outro 0,430; ruído de semente do IF 0,962 |
+| `drift_vs_jaccard_if_minus_ocsvm_p01` | 132 | spearman_permutation | 0,218 | 0,218 |  | 0.013 | **0.013** |  |
+
+### H1a: indicadores por tipo de favorecido (`individual` × `company`)
+
+3 de 6 testes significativos.
+
+| Variável | n | Teste | Estatística | Efeito | IC 95% | p | p ajustado | Medianas |
+|---|---|---|---|---|---|---|---|---|
+| `jaccard_if_lof` | 24 | mann_whitney | 92,500 | 0,285 |  | 0.25 | 0.5 | individual 0,255; company 0,215 |
+| `jaccard_if_ocsvm` | 24 | mann_whitney | 122,500 | 0,701 |  | 0.0038 | **0.015** | individual 0,213; company 0,101 |
+| `jaccard_lof_ocsvm` | 24 | mann_whitney | 134,500 | 0,868 |  | 0.00034 | **0.0017** | individual 0,172; company 0,062 |
+| `stability_if` | 24 | mann_whitney | 53,000 | -0,264 |  | 0.29 | 0.5 | individual 0,881; company 0,896 |
+| `stability_lof` | 24 | mann_whitney | 106,000 | 0,472 |  | 0.053 | 0.16 | individual 0,926; company 0,805 |
+| `stability_ocsvm` | 24 | mann_whitney | 140,000 | 0,944 |  | 9.7e-05 | **0.00058** | individual 0,257; company 0,144 |
+
+### H1b: associação entre atipicidade da célula e indicadores
+
+4 de 18 testes significativos.
+
+| Variável | n | Teste | Estatística | Efeito | IC 95% | p | p ajustado | Medianas |
+|---|---|---|---|---|---|---|---|---|
+| `duplicate_share_vs_jaccard_if_lof` | 24 | spearman_permutation | -0,092 | -0,092 |  | 0.67 | 1 |  |
+| `duplicate_share_vs_jaccard_if_ocsvm` | 24 | spearman_permutation | 0,514 | 0,514 |  | 0.011 | 0.14 |  |
+| `duplicate_share_vs_jaccard_lof_ocsvm` | 24 | spearman_permutation | 0,699 | 0,699 |  | 0.0008 | **0.014** |  |
+| `duplicate_share_vs_stability_if` | 24 | spearman_permutation | -0,226 | -0,226 |  | 0.29 | 1 |  |
+| `duplicate_share_vs_stability_lof` | 24 | spearman_permutation | 0,334 | 0,334 |  | 0.11 | 0.84 |  |
+| `duplicate_share_vs_stability_ocsvm` | 24 | spearman_permutation | 0,786 | 0,786 |  | 0.0001 | **0.0018** |  |
+| `kurtosis_vs_jaccard_if_lof` | 24 | spearman_permutation | 0,047 | 0,047 |  | 0.82 | 1 |  |
+| `kurtosis_vs_jaccard_if_ocsvm` | 24 | spearman_permutation | 0,423 | 0,423 |  | 0.042 | 0.42 |  |
+| `kurtosis_vs_jaccard_lof_ocsvm` | 24 | spearman_permutation | 0,568 | 0,568 |  | 0.0046 | 0.064 |  |
+| `kurtosis_vs_stability_if` | 24 | spearman_permutation | -0,340 | -0,340 |  | 0.11 | 0.84 |  |
+| `kurtosis_vs_stability_lof` | 24 | spearman_permutation | 0,211 | 0,211 |  | 0.32 | 1 |  |
+| `kurtosis_vs_stability_ocsvm` | 24 | spearman_permutation | 0,604 | 0,604 |  | 0.0017 | **0.027** |  |
+| `skewness_vs_jaccard_if_lof` | 24 | spearman_permutation | 0,365 | 0,365 |  | 0.08 | 0.72 |  |
+| `skewness_vs_jaccard_if_ocsvm` | 24 | spearman_permutation | 0,446 | 0,446 |  | 0.029 | 0.32 |  |
+| `skewness_vs_jaccard_lof_ocsvm` | 24 | spearman_permutation | 0,611 | 0,611 |  | 0.0018 | **0.027** |  |
+| `skewness_vs_stability_if` | 24 | spearman_permutation | -0,026 | -0,026 |  | 0.9 | 1 |  |
+| `skewness_vs_stability_lof` | 24 | spearman_permutation | 0,192 | 0,192 |  | 0.36 | 1 |  |
+| `skewness_vs_stability_ocsvm` | 24 | spearman_permutation | 0,469 | 0,469 |  | 0.021 | 0.25 |  |
+
+### H1c: manipulação controlada de duplicados (células `company`)
+
+4 de 6 testes significativos.
+
+| Variável | n | Teste | Estatística | Efeito | IC 95% | p | p ajustado | Medianas |
+|---|---|---|---|---|---|---|---|---|
+| `jaccard_if_lof` | 12 | friedman | 10,500 | 0,292 |  | 0.015 | **0.044** | 0%: 0,215; 10%: 0,200; 30%: 0,200; 50%: 0,287 |
+| `jaccard_if_ocsvm` | 12 | friedman | 2,048 | 0,057 |  | 0.56 | 0.74 | 0%: 0,101; 10%: 0,116; 30%: 0,106; 50%: 0,160 |
+| `jaccard_lof_ocsvm` | 12 | friedman | 3,134 | 0,087 |  | 0.37 | 0.74 | 0%: 0,062; 10%: 0,108; 30%: 0,091; 50%: 0,131 |
+| `retention_if` | 12 | friedman | 12,351 | 0,343 |  | 0.0063 | **0.025** | 0%: 1,000; 10%: 1,000; 30%: 0,923; 50%: 0,789 |
+| `retention_lof` | 12 | friedman | 31,619 | 0,878 |  | 6.3e-07 | **3.8e-06** | 0%: 1,000; 10%: 0,609; 30%: 0,359; 50%: 0,267 |
+| `retention_ocsvm` | 12 | friedman | 29,897 | 0,830 |  | 1.5e-06 | **7.3e-06** | 0%: 1,000; 10%: 0,222; 30%: 0,095; 50%: 0,029 |
+
 ## Apêndice: artefato do LOF com vetores duplicados
 
 Execuções demonstrativas, fora das métricas comparativas (decisão 0005).
