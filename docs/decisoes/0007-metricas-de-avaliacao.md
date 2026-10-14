@@ -1,7 +1,7 @@
 # 0007 — Métricas de avaliação
 
 - **Data:** 2026-10-14
-- **Status:** proposta (aguardando revisão)
+- **Status:** aceita (revisão de 2026-10-14)
 
 Define como cada critério da seção 2 do AGENTS.md é calculado. Implementado em `ml/src/anomalygov_ml/report.py`. Os valores ficam nas tabelas `run_metrics` e `run_comparisons` (migration 004), e o relatório de cada experimento é gerado em `docs/resultados/<experimento>.md`. Nenhuma métrica depende de rótulos: não há acurácia, precisão, recall nem F1.
 
@@ -29,7 +29,9 @@ Salvo indicação contrária, tudo é calculado sobre a amostra principal, com `
 
 A primeira versão do substituto usava uma árvore de **classificação** com `class_weight="balanced"` para imitar os sinalizados, com fidelidade medida pelo Jaccard. Com 1% de positivos, o balanceamento fazia a árvore marcar como anômalas regiões inteiras: os dois ramos de um mesmo nó terminavam em `True`, e a fidelidade ficava entre 0,05 e 0,12 por efeito do peso, não dos algoritmos. Ela foi substituída pela árvore de regressão sobre o escore.
 
-## Pontos para decidir
+## Situação da revisão (2026-10-14)
 
-1. Interpretabilidade medida pelo substituto global (R²) mais a feature dominante?
-2. Manter as medianas de features sem ponderação?
+| Ponto | Situação |
+|---|---|
+| 1. Interpretabilidade por substituto global (R²) e feature dominante | Aceito |
+| 2. Medianas de features sem ponderação | Aceito |
