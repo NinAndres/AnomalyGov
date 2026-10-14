@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anomalygov-ml"
+version = "0.1.0"
+description = "Worker de ETL e detecção de anomalias do AnomalyGov"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "psycopg[binary]",
+    "scikit-learn",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

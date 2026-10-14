@@ -1,0 +1,30 @@
+# Dados brutos (nunca versionar)
+data/raw/*
+!data/raw/.gitkeep
+
+# Credenciais
+.env
+.env.*
+!.env.example
+
+# Visual Studio / .NET
+.vs/
+bin/
+obj/
+*.user
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# IDEs
+.idea/
+.vscode/
