@@ -299,6 +299,8 @@ def finish(ctx: Context) -> None:
     rows["p_adjusted"] = None
     for family, idx in rows.groupby("family").groups.items():
         rows.loc[idx, "p_adjusted"] = stats.holm(rows.loc[idx, "p_value"].tolist())
+    # pandas turns a missing value (e.g. no confidence interval) into NaN; store it as NULL.
+    rows = rows.astype(object).where(rows.notna(), None)
     with ctx.conn.transaction(), ctx.conn.cursor() as cur:
         cur.executemany(
             """INSERT INTO hypothesis_tests (experiment, hypothesis, family, test, variable, n, statistic, effect,

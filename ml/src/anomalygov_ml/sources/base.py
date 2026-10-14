@@ -19,6 +19,7 @@ class SourceAdapter(ABC):
     """Contract for one kind of Portal da Transparência dataset."""
 
     name: str
+    label: str
     filters: tuple[FilterSpec, ...]
     display_columns: tuple[str, ...]
     strata_columns: tuple[str, ...]
@@ -39,3 +40,17 @@ class SourceAdapter(ABC):
     @abstractmethod
     def load_features(self, conn: psycopg.Connection, ids: list[int]) -> pd.DataFrame:
         """Return the numeric feature matrix (`feature_columns`) for the given record ids, indexed by id."""
+
+    @abstractmethod
+    def filter_options(self, conn: psycopg.Connection) -> dict[str, dict]:
+        """Extra attributes per filter name, computed from the records in `conn`.
+
+        Select filters get `options` ([{value, label}]); range filters get `min` and `max`.
+        """
+
+    def describe(self, conn: psycopg.Connection) -> dict:
+        """Definition stored in the `sources` table and read by the backend and the frontend."""
+        extra = self.filter_options(conn)
+        filters = [{"name": f.name, "type": f.type, "label": f.label, **extra.get(f.name, {})} for f in self.filters]
+        return {"name": self.name, "label": self.label, "filters": filters,
+                "display_columns": list(self.display_columns)}

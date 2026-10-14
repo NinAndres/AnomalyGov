@@ -16,6 +16,9 @@ import os
 
 import psycopg
 import psycopg.sql
+from psycopg.types.json import Jsonb
+
+from anomalygov_ml.ingest import ADAPTERS
 
 COLUMNS = {
     "dataset_files": "id, source, file_name, sha256, row_count, period_start, period_end, ingested_at, "
@@ -85,6 +88,7 @@ def publish(source: psycopg.Connection, target: psycopg.Connection, experiment: 
         raise ValueError(f"ids de execução já usados por outro experimento no destino: {clash[:5]}")
 
     in_sample = f"SELECT payment_id FROM sample_records WHERE sample_id = {main_sample}"
+    source_name = source.execute("SELECT source FROM samples WHERE id = %s", (main_sample,)).fetchone()[0]
     quoted = psycopg.sql.Literal(experiment).as_string(source)
     file_ids = f"SELECT unnest(dataset_file_ids) FROM samples WHERE id IN ({ids_sql(sample_ids)})"
     steps = [
@@ -114,6 +118,14 @@ def publish(source: psycopg.Connection, target: psycopg.Connection, experiment: 
             target.execute(f"DELETE FROM {table} WHERE experiment = %s", (experiment,))
         for table, select_sql in steps:
             written[table] = transfer(source, target, table, select_sql)
+        definition = ADAPTERS[source_name].describe(target)
+        target.execute(
+            """INSERT INTO sources (name, label, filters, display_columns) VALUES (%s, %s, %s, %s)
+               ON CONFLICT (name) DO UPDATE SET label = EXCLUDED.label, filters = EXCLUDED.filters,
+                   display_columns = EXCLUDED.display_columns, updated_at = now()""",
+            (definition["name"], definition["label"], Jsonb(definition["filters"]), Jsonb(definition["display_columns"])),
+        )
+        written["sources"] = 1
         for table in IDENTITY_TABLES:
             # Keep the target's own inserts (e.g. exploration runs) after the published ids.
             target.execute(

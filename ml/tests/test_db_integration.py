@@ -190,6 +190,11 @@ def test_hypotheses_end_to_end(tmp_path):
             """SELECT bool_and(p_adjusted >= p_value AND p_adjusted <= 1 AND p_value BETWEEN 0 AND 1)
                FROM hypothesis_tests WHERE experiment = 'teste-hipoteses'"""
         ).fetchone()[0]
+        # Missing values (no confidence interval) must be NULL, never NaN, so the API can serialize them.
+        assert conn.execute(
+            """SELECT count(*) FROM hypothesis_tests WHERE experiment = 'teste-hipoteses'
+               AND 'NaN'::float8 IN (statistic, effect, ci_low, ci_high, p_value, p_adjusted)"""
+        ).fetchone()[0] == 0
         from anomalygov_ml import report
 
         text = report.render_hypotheses(report.load(conn, "teste-hipoteses").hypothesis_tests)

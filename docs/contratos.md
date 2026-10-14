@@ -143,10 +143,93 @@ Definidos em `PaymentsAdapter.filters` (`ml/src/anomalygov_ml/sources/payments.p
 | `favored_type` | `select` | Tipo de favorecido |
 | `amount` | `number_range` | Valor recebido (R$) |
 
+### `sources`, `jobs` e `payments_display` (006)
+
+| Objeto | Descrição |
+|---|---|
+| `sources` | Uma linha por base: `name`, `label`, `filters` (jsonb: `[{name, type, label, options?, min?, max?}]`) e `display_columns` (jsonb). Gravada pela publicação (`anomalygov_ml.publish`), com as opções e faixas calculadas a partir da amostra publicada. |
+| `jobs` | Fila do modo `exploration`: `id` (uuid), `source`, `status` (`pending` → `running` → `succeeded` ou `failed`), `filters`, `params`, `result`, `error`, `created_at`, `started_at`, `finished_at`. Restrições garantem a coerência entre `status`, datas e `error`. |
+| `runs.job_id` | Liga as execuções de um job (nulo no modo `experiment`). Apagar o job apaga suas execuções e escores. |
+| `payments_display` | View com as colunas de exibição de cada pagamento (`<source>_display` é a convenção lida pelo backend). Nome e código de pessoa física são sempre nulos. `security_invoker = true`: respeita o RLS de quem consulta. |
+
 ## Formato de `filters` e `params` dos jobs
 
-_A definir._
+Validados pelo backend contra a definição em `sources` (`JobRequestValidator`). Todos os filtros são opcionais; filtros desconhecidos são rejeitados.
+
+| Tipo de filtro | Formato | Regras |
+|---|---|---|
+| `month_range` | `{"from": "2025-03", "to": "2025-06"}` | `AAAA-MM`; ao menos um dos limites; `from` ≤ `to`; o intervalo precisa tocar a faixa `min`–`max` disponível |
+| `select` | `["26000", "36000"]` | Lista não vazia de textos (até 500), todos presentes em `options` |
+| `number_range` | `{"min": 100, "max": 5000}` | Ao menos um dos limites; `min` ≤ `max` |
+
+Exemplo (base `payments`):
+
+```json
+{
+  "source": "payments",
+  "filters": {
+    "reference_month": {"from": "2025-01", "to": "2025-06"},
+    "favored_type": ["company"],
+    "amount": {"min": 1000}
+  },
+  "params": {"p": 0.01}
+}
+```
+
+`params` aceita apenas `p` (0 < p ≤ 0,10; padrão 0,01). Os algoritmos usam a configuração principal do experimento publicado (decisão 0006); o usuário não escolhe hiperparâmetros.
+
+## Processamento de um job (worker)
+
+1. Reserva: `SELECT ... FROM jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`, depois `status = 'running'`, `started_at = now()`.
+2. Seleciona os registros da amostra publicada que atendem aos filtros. Se passarem de `EXPLORATION_MAX_ROWS`, sorteia esse número (semente registrada).
+3. Executa os três algoritmos sobre o recorte, com escalador ajustado no próprio recorte. As anomalias são **relativas ao recorte**.
+4. Grava uma linha em `runs` por algoritmo: `mode = 'exploration'`, `purpose = 'main'`, `experiment = 'exploration'`, `job_id`, `train_sample_id` e `scored_sample_id` = amostra principal publicada, `subset` = filtros do job, e os escores em `run_scores`.
+5. Conclui com `status = 'succeeded'`, `finished_at = now()` e `result`, ou `status = 'failed'`, `finished_at` e `error` (mensagem para o usuário, sem detalhes internos).
+
+`result` (jsonb):
+
+```json
+{
+  "n_filtered": 12840,
+  "n_used": 12840,
+  "sampled": false,
+  "sample_seed": null,
+  "runs": {"isolation_forest": 801, "lof": 802, "one_class_svm": 803}
+}
+```
+
+## API (backend)
+
+Base `/api`, JSON em camelCase, erros no formato Problem Details (RFC 9457) com títulos em português. Projeto em `backend/AnomalyGov.Api`.
+
+| Método e rota | Descrição |
+|---|---|
+| `GET /api/health` | Verifica a conexão com o banco |
+| `GET /api/sources`, `GET /api/sources/{name}` | Definição das bases (filtros com opções, colunas de exibição) |
+| `POST /api/jobs` | Cria um job `pending` (201 + `Location`); 400 com `errors` por campo (`filters.<nome>`, `params.p`); limitado por IP (`RateLimiting:JobsPerMinute`, padrão 10/min) |
+| `GET /api/jobs/{id}` | Estado do job (o frontend consulta até concluir) |
+| `GET /api/jobs/{id}/records?algorithm=&page=&pageSize=` | Registros sinalizados do job (409 se o job não terminou com sucesso) |
+| `GET /api/experiments` | Experimentos publicados |
+| `GET /api/experiments/{name}` | Execuções principais com métricas, concordância, estabilidade, escalabilidade e testes de hipóteses |
+| `GET /api/experiments/{name}/records?p=&algorithm=&page=&pageSize=` | Registros sinalizados pelas execuções principais |
 
 ## Formato dos resultados
 
-_A definir._
+Os registros sinalizados (`/records`) seguem a regra da decisão 0006: sinalizado quando `raw_score` ≥ quantil `1 − p` dos escores da execução, com interpolação linear (`percentile_cont`, igual ao `numpy.quantile`). A lista traz os registros sinalizados por **ao menos um** algoritmo, ordenados pelo número de algoritmos que os sinalizaram e pelo maior escore. `algorithm` restringe aos sinalizados por um algoritmo. `pageSize` vai até 200.
+
+```json
+{
+  "p": 0.01, "algorithm": null, "page": 1, "pageSize": 50, "total": 1255,
+  "items": [{
+    "paymentId": 3672062,
+    "flaggedCount": 3,
+    "flags": {"isolation_forest": true, "lof": true, "one_class_svm": true},
+    "scores": {"isolation_forest": 0.9986, "lof": 0.9998, "one_class_svm": 1.0},
+    "values": {"reference_month": "2025-07", "favored_type": "management_unit", "favored_name": "...",
+               "superior_agency_name": "...", "management_unit_name": "...", "uf": "DF",
+               "municipality": "BRASÍLIA", "amount": 13668.91}
+  }]
+}
+```
+
+`scores` são os escores normalizados (posto percentual em (0, 1]). `values` traz as `display_columns` da base com os nomes de coluna originais. Valores não finitos (NaN, infinito) são devolvidos como `null`.

@@ -80,8 +80,18 @@ def favored_key(code: str, name: str, favored_type: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+FAVORED_TYPE_LABELS = {
+    "individual": "Pessoa física",
+    "company": "Pessoa jurídica",
+    "management_unit": "Unidade gestora federal",
+    "foreign": "Favorecido no exterior",
+    "special": "Código especial (sigiloso, folha de pagamento, sem informação)",
+}
+
+
 class PaymentsAdapter(SourceAdapter):
     name = "payments"
+    label = "Recebimentos de recursos por favorecido"
     filters = (
         FilterSpec("reference_month", "month_range", "Mês de referência"),
         FilterSpec("superior_agency_code", "select", "Órgão superior"),
@@ -175,3 +185,25 @@ class PaymentsAdapter(SourceAdapter):
                 dtype={"management_unit_code": str},
             ).set_index("management_unit_code")["log_median"]
         return compute_features(history, ug_log_median).loc[list(ids)]
+
+    def filter_options(self, conn: psycopg.Connection) -> dict[str, dict]:
+        def options(query: str) -> list[dict]:
+            return [{"value": value, "label": label} for value, label in conn.execute(query).fetchall()]
+
+        first, last, low, high = conn.execute(
+            """SELECT to_char(min(reference_month), 'YYYY-MM'), to_char(max(reference_month), 'YYYY-MM'),
+                      min(amount)::float8, max(amount)::float8 FROM payments"""
+        ).fetchone()
+        types = [row[0] for row in conn.execute("SELECT DISTINCT favored_type FROM favored ORDER BY 1").fetchall()]
+        return {
+            "reference_month": {"min": first, "max": last},
+            "superior_agency_code": {"options": options(
+                """SELECT DISTINCT m.superior_agency_code, m.superior_agency_name FROM payments p
+                   JOIN management_units m ON m.code = p.management_unit_code ORDER BY 2""")},
+            "management_unit_code": {"options": options(
+                """SELECT DISTINCT m.code, m.name FROM payments p
+                   JOIN management_units m ON m.code = p.management_unit_code ORDER BY 2""")},
+            "uf": {"options": options("SELECT DISTINCT uf, uf FROM payments WHERE uf IS NOT NULL ORDER BY 1")},
+            "favored_type": {"options": [{"value": t, "label": FAVORED_TYPE_LABELS.get(t, t)} for t in types]},
+            "amount": {"min": low, "max": high},
+        }
