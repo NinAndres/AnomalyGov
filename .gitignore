@@ -28,3 +28,6 @@ dist/
 # IDEs
 .idea/
 .vscode/
+
+# Figuras do artigo, geradas localmente por anomalygov_ml.figures (decisão 0013)
+docs/resultados/figuras/
