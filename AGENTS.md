@@ -121,7 +121,7 @@ Os algoritmos (`ml/src/anomalygov_ml/models/`) são agnósticos à base: recebem
 
 ## 6. Escalabilidade e amostragem
 
-- O volume esperado é de aproximadamente 4 milhões de registros por ano.
+- O volume medido em 2025 é de 8,1 milhões de registros após as exclusões (8,2 milhões brutos; decisão 0001), o dobro da previsão inicial de 4 milhões.
 - One-Class SVM não é viável na base completa, e o LOF tem custo elevado. Nos experimentos comparativos, usar **amostra estratificada**, com tamanho e critério de estratificação documentados na configuração do experimento.
 - **A mesma amostra deve ser aplicada aos três algoritmos** em uma mesma execução comparativa.
 - O tempo de execução de cada algoritmo em diferentes tamanhos de amostra é um resultado do experimento (escalabilidade) e deve ser registrado.

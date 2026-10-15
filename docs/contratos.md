@@ -57,7 +57,7 @@ Fato: total recebido no mês por favorecido, unidade gestora e localidade.
 | `management_unit_code` | varchar(6) | FK `management_units` |
 | `uf` | char(2) | `NULL` se sem informação; `EX` para exterior |
 | `municipality` | text | `NULL` se sem informação |
-| `amount` | numeric(18,2) | Valor recebido (pode ser negativo) |
+| `amount` | numeric(18,2) | Valor recebido, sempre positivo (negativos e zeros são excluídos na ingestão, decisão 0003) |
 
 ### `samples` e `sample_records` (003)
 

@@ -17,4 +17,6 @@
 
 ## Restrição do ambiente
 
-O Vite e o Vitest não funcionam quando o caminho do projeto contém `#`. O caminho atual (`Estudos C#`) faz `npm run dev`, `npm run build` e `npm test` falharem com "module not found". Junções e `subst` não resolvem, porque o Vite segue até o caminho real. A verificação desta etapa (typecheck, 24 testes e build) foi feita numa cópia do `frontend/` num caminho sem `#`. Para trabalhar no frontend, o projeto precisa estar num caminho sem `#`.
+O Vite e o Vitest não funcionam quando o caminho do projeto contém `#` (falham com "module not found"; junções e `subst` não resolvem, porque o Vite segue até o caminho real). Na época desta decisão, o projeto ficava em `Estudos C#`, e a verificação (typecheck, 24 testes e build) foi feita numa cópia do `frontend/`.
+
+**Atualização (2026-10-15):** o projeto foi movido para um caminho sem `#` (`Desktop\TCC\AnomalyGov`), e `npm test` passa no próprio repositório (24 testes). A restrição continua valendo: o projeto não deve voltar para um caminho com `#`.
