@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EXPERIMENT, job, mockApi, PAGE, SOURCE } from "../test/fixtures";
@@ -119,5 +119,34 @@ describe("ExperimentPage", () => {
     expect(screen.getByText("0,900 (0,890–0,910)")).toBeInTheDocument();
     expect(screen.getByText("1 de 1 testes significativos (α = 0,05).")).toBeInTheDocument();
     expect(await screen.findByText("EMPRESA X")).toBeInTheDocument();
+  });
+
+  it("shows charts with table twins for the characteristics, interpretability and overlaps", async () => {
+    const user = userEvent.setup();
+    mockApi({
+      "GET /api/experiments/principal-2025": () => EXPERIMENT,
+      "GET /api/sources": () => [SOURCE],
+      "GET /api/experiments/principal-2025/records": () => PAGE,
+    });
+    renderAt("/experimentos/principal-2025");
+
+    expect(await screen.findByText("Tempo total na amostra principal (treino + pontuação, segundos)")).toBeInTheDocument();
+    expect(screen.getByText("Registros sinalizados por quantos algoritmos")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "910" })).toBeInTheDocument();
+    expect(screen.getByText("H2: estabilidade entre meses (Jaccard mediano dos 132 pares de meses)")).toBeInTheDocument();
+
+    const characteristics = screen.getByRole("heading", { name: "Características dos registros sinalizados" }).closest("section")!;
+    // Type labels come from the source definition; rates are weighted.
+    const companyRow = within(characteristics).getByRole("row", { name: /Pessoa jurídica/ });
+    expect(within(companyRow).getByText("1,48%")).toBeInTheDocument();
+    expect(within(characteristics).getByText("Valor recebido (R$)")).toBeInTheDocument();
+    expect(within(characteristics).getByText("Ministério da Educação")).toBeInTheDocument();
+
+    await user.selectOptions(within(characteristics).getByRole("combobox", { name: /Limiar p/ }), "0.05");
+    expect(within(characteristics).getByText("6,00%")).toBeInTheDocument();
+
+    const interpretability = screen.getByRole("heading", { name: "Interpretabilidade" }).closest("section")!;
+    expect(within(interpretability).getByText("0,220")).toBeInTheDocument();
+    expect(within(interpretability).getByText("Regras da árvore substituta: LOF")).toBeInTheDocument();
   });
 });

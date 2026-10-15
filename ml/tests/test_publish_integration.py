@@ -41,6 +41,13 @@ def test_publish_is_complete_minimal_and_idempotent(source, target, experiment):
     hypothesis_counts = "SELECT (SELECT count(*) FROM hypothesis_units WHERE experiment = %s), "                         "(SELECT count(*) FROM hypothesis_tests WHERE experiment = %s)"
     assert target.execute(hypothesis_counts, (experiment, experiment)).fetchone() ==         source.execute(hypothesis_counts, (experiment, experiment)).fetchone()
 
+    profile_counts = """SELECT (SELECT count(*) FROM run_profiles pr JOIN runs r ON r.id = pr.run_id
+                                    WHERE r.experiment = %s),
+                               (SELECT count(*) FROM run_surrogates s JOIN runs r ON r.id = s.run_id
+                                    WHERE r.experiment = %s),
+                               (SELECT count(*) FROM experiment_overlaps WHERE experiment = %s)"""
+    assert target.execute(profile_counts, (experiment,) * 3).fetchone() ==         source.execute(profile_counts, (experiment,) * 3).fetchone()
+
     # New rows created on the target (e.g. exploration runs) must not collide with published ids.
     next_id = target.execute(
         """INSERT INTO runs (experiment, config_sha256, mode, purpose, algorithm, params, feature_columns,

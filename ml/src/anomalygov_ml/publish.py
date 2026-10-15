@@ -3,8 +3,8 @@
 Usage: python -m anomalygov_ml.publish EXPERIMENT [--scores main,parameter,...]
 
 Copies, in a single transaction on the target, only what the application needs: the main sample with its
-payments, favored and management units, the dataset files, every run of the experiment with its metrics and
-comparisons, the hypothesis results, and the per-record scores of the runs whose purpose is listed in --scores
+payments, favored and management units, the dataset files, every run of the experiment with its metrics,
+comparisons, profiles and surrogate trees, the overlaps and hypothesis results, and the per-record scores of the runs whose purpose is listed in --scores
 (default: main). Ids are preserved, so re-publishing is idempotent; runs and hypothesis results of the
 experiment that no longer exist locally are removed from the target. The target must already have the
 migrations applied.
@@ -34,6 +34,9 @@ COLUMNS = {
     "run_scores": "run_id, payment_id, raw_score, normalized_score",
     "run_metrics": "run_id, p, flagged_count, flagged_share, weighted_flagged_share",
     "run_comparisons": "run_a, run_b, p, jaccard, spearman",
+    "run_profiles": "run_id, p, dimension, category, value, baseline",
+    "run_surrogates": "run_id, depth, fidelity, rules",
+    "experiment_overlaps": "experiment, p, algorithm_count, record_count",
     "hypothesis_units": "id, experiment, hypothesis, unit, measures, created_at",
     "hypothesis_tests": "id, experiment, hypothesis, family, test, variable, n, statistic, effect, ci_low, ci_high, "
                         "p_value, p_adjusted, details, created_at",
@@ -105,6 +108,10 @@ def publish(source: psycopg.Connection, target: psycopg.Connection, experiment: 
         ("run_metrics", f"SELECT {COLUMNS['run_metrics']} FROM run_metrics WHERE run_id IN ({ids_sql(run_ids)})"),
         ("run_comparisons", f"""SELECT {COLUMNS['run_comparisons']} FROM run_comparisons
                                 WHERE run_a IN ({ids_sql(run_ids)}) AND run_b IN ({ids_sql(run_ids)})"""),
+        ("run_profiles", f"SELECT {COLUMNS['run_profiles']} FROM run_profiles WHERE run_id IN ({ids_sql(run_ids)})"),
+        ("run_surrogates", f"SELECT {COLUMNS['run_surrogates']} FROM run_surrogates WHERE run_id IN ({ids_sql(run_ids)})"),
+        ("experiment_overlaps", f"SELECT {COLUMNS['experiment_overlaps']} FROM experiment_overlaps "
+                                f"WHERE experiment = {quoted}"),
         ("hypothesis_units", f"SELECT {COLUMNS['hypothesis_units']} FROM hypothesis_units WHERE experiment = {quoted}"),
         ("hypothesis_tests", f"SELECT {COLUMNS['hypothesis_tests']} FROM hypothesis_tests WHERE experiment = {quoted}"),
     ]
@@ -119,8 +126,10 @@ def publish(source: psycopg.Connection, target: psycopg.Connection, experiment: 
         target.execute(
             f"DELETE FROM runs WHERE experiment = %s AND mode = 'experiment' AND id NOT IN ({ids_sql(run_ids)})", (experiment,)
         )
-        for table in ("hypothesis_units", "hypothesis_tests"):
+        for table in ("hypothesis_units", "hypothesis_tests", "experiment_overlaps"):
             target.execute(f"DELETE FROM {table} WHERE experiment = %s", (experiment,))
+        for table in ("run_profiles", "run_surrogates"):
+            target.execute(f"DELETE FROM {table} WHERE run_id IN ({ids_sql(run_ids)})")
         for table, select_sql in steps:
             written[table] = transfer(source, target, table, select_sql)
         definition = adapter.describe(target)

@@ -2,8 +2,9 @@
 
 Usage: python -m anomalygov_ml.report EXPERIMENT [--out FILE.md]
 
-Reads the runs of the experiment from the local database (DATABASE_URL), stores per-run metrics and
-pairwise comparisons (run_metrics, run_comparisons) and writes a Markdown report.
+Reads the runs of the experiment from the local database (DATABASE_URL), stores per-run metrics, pairwise
+comparisons, characteristics of the flagged records, surrogate trees and overlaps (run_metrics, run_comparisons,
+run_profiles, run_surrogates, experiment_overlaps) and writes a Markdown report.
 """
 
 import argparse
@@ -182,6 +183,75 @@ def store_tables(conn: psycopg.Connection, run_metrics: pd.DataFrame, run_compar
         cur.executemany(
             "INSERT INTO run_comparisons VALUES (%s, %s, %s, %s, %s)",
             [(int(a), int(b), float(p), float(j), float(r)) for a, b, p, j, r in run_comparisons.itertuples(index=False)],
+        )
+
+
+def compute_profiles(data: ExperimentData) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Characteristics of the flagged records, surrogate trees and overlaps of the main runs (migration 008).
+
+    Returns run_profiles, run_surrogates and experiment_overlaps, with the same numbers as the report.
+    """
+    weights = data.records["weight"].to_numpy()
+    main = {alg: data.main_run(alg) for alg in ALGORITHMS}
+    columns = list(data.features.columns)
+    X_raw = data.features.to_numpy()
+    X_scaled = RobustScaler().fit_transform(X_raw)
+    groups = {
+        "favored_type": data.records["favored_type"],
+        "reference_month": data.records["reference_month"].dt.strftime("%Y-%m"),
+    }
+    agencies = data.records["superior_agency_name"].fillna("—")
+    values = {c: data.features[c].to_numpy() for c in columns}
+    values["amount"] = data.records["amount"].to_numpy(dtype=float)
+
+    profile_rows, overlap_rows = [], []
+    for p in P_VALUES:
+        flags = {alg: data.flags(run_id, p) for alg, run_id in main.items()}
+        overlap_rows += [(data.name, p, k, n) for k, n in overlap_counts(flags).items()]
+        for alg, run_id in main.items():
+            f = flags[alg]
+            for dimension, group in groups.items():
+                profile = group_profile(f, group, weights)
+                profile_rows += [(run_id, p, dimension, str(category), row.flagged_rate, row.population_share)
+                                 for category, row in profile.iterrows()]
+            profile = group_profile(f, agencies, weights)
+            profile_rows += [(run_id, p, "superior_agency", str(category), row.flagged_share, row.population_share)
+                             for category, row in profile.iterrows() if row.flagged_share > 0]
+            profile_rows += [(run_id, p, "feature_median", c, float(np.median(v[f])), float(np.median(v)))
+                             for c, v in values.items()]
+            profile_rows += [(run_id, p, "dominant_feature", c, share, None)
+                             for c, share in dominant_feature(X_scaled, f, columns).items()]
+    run_profiles = pd.DataFrame(profile_rows, columns=["run_id", "p", "dimension", "category", "value", "baseline"])
+
+    surrogate_rows = []
+    for run_id in main.values():
+        fidelity, rules = surrogate_tree(X_raw, metrics.normalize(data.scores[run_id].to_numpy()), columns)
+        surrogate_rows.append((run_id, SURROGATE_DEPTH, fidelity, rules))
+    run_surrogates = pd.DataFrame(surrogate_rows, columns=["run_id", "depth", "fidelity", "rules"])
+    experiment_overlaps = pd.DataFrame(overlap_rows, columns=["experiment", "p", "algorithm_count", "record_count"])
+    return run_profiles, run_surrogates, experiment_overlaps
+
+
+def store_profiles(conn: psycopg.Connection, run_profiles: pd.DataFrame, run_surrogates: pd.DataFrame,
+                   experiment_overlaps: pd.DataFrame) -> None:
+    run_ids = [int(i) for i in run_surrogates["run_id"]]
+    experiments = [str(e) for e in experiment_overlaps["experiment"].unique()]
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute("DELETE FROM run_profiles WHERE run_id = ANY (%s)", (run_ids,))
+        cur.execute("DELETE FROM run_surrogates WHERE run_id = ANY (%s)", (run_ids,))
+        cur.execute("DELETE FROM experiment_overlaps WHERE experiment = ANY (%s)", (experiments,))
+        cur.executemany(
+            "INSERT INTO run_profiles VALUES (%s, %s, %s, %s, %s, %s)",
+            [(int(r), float(p), d, c, float(v), None if pd.isna(b) else float(b))
+             for r, p, d, c, v, b in run_profiles.itertuples(index=False)],
+        )
+        cur.executemany(
+            "INSERT INTO run_surrogates VALUES (%s, %s, %s, %s)",
+            [(int(r), int(d), float(f), rules) for r, d, f, rules in run_surrogates.itertuples(index=False)],
+        )
+        cur.executemany(
+            "INSERT INTO experiment_overlaps VALUES (%s, %s, %s, %s)",
+            [(e, float(p), int(k), int(n)) for e, p, k, n in experiment_overlaps.itertuples(index=False)],
         )
 
 
@@ -440,6 +510,7 @@ def main() -> None:
         data = load(conn, args.experiment)
         run_metrics, run_comparisons = compute_tables(data)
         store_tables(conn, run_metrics, run_comparisons)
+        store_profiles(conn, *compute_profiles(data))
     text = render(data, run_metrics, run_comparisons)
     if args.out:
         args.out.write_text(text, encoding="utf-8", newline="\n")

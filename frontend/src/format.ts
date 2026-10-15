@@ -14,6 +14,27 @@ export const ALGORITHM_SHORT: Record<Algorithm, string> = {
   one_class_svm: "OCSVM",
 };
 
+/** Features of the payments base (decision 0005) and the amount, in plain words. */
+const FEATURE_LABELS: Record<string, string> = {
+  log_amount: "Valor (log)",
+  amount_vs_ug: "Valor vs. unidade gestora",
+  amount_vs_favored: "Valor vs. próprio favorecido",
+  favored_months: "Meses com recebimento",
+  favored_ug_count: "Unidades pagadoras (log)",
+  amount: "Valor recebido (R$)",
+};
+
+export function featureLabel(feature: string): string {
+  return FEATURE_LABELS[feature] ?? feature;
+}
+
+/** Orders features as in the matrix of the algorithms, with the amount last; unknown names go to the end. */
+export function compareFeatures(a: string, b: string): number {
+  const order = Object.keys(FEATURE_LABELS);
+  const rank = (x: string) => (order.includes(x) ? order.indexOf(x) : order.length);
+  return rank(a) - rank(b) || a.localeCompare(b);
+}
+
 /** Labels of the display columns of the bases; unknown columns show their own name. */
 const COLUMN_LABELS: Record<string, string> = {
   reference_month: "Mês",

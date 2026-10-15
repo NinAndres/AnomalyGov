@@ -3,6 +3,7 @@
 import os
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from anomalygov_ml.sampling import stratified_sample
@@ -125,6 +126,29 @@ def test_tiny_experiment_end_to_end(tmp_path):
         ).fetchone()[0] == 8 * 3
         # 3 pairs among main runs + 5 non-main runs compared with their main run.
         assert len(run_comparisons) == (3 + 5) * 3
+        profiles, surrogates, overlaps = report.compute_profiles(data)
+        report.store_profiles(conn, profiles, surrogates, overlaps)
+        report.store_profiles(conn, profiles, surrogates, overlaps)  # idempotent
+        stored = dict(conn.execute(
+            """SELECT dimension, count(*) FROM run_profiles pr JOIN runs r ON r.id = pr.run_id
+               WHERE r.experiment = 'teste-integracao' GROUP BY dimension"""
+        ).fetchall())
+        assert stored == profiles.groupby("dimension").size().to_dict()
+        # 5 features + the amount; 3 main runs; 3 values of p.
+        assert stored["feature_median"] == 6 * 3 * 3 and stored["dominant_feature"] == 5 * 3 * 3
+        assert conn.execute(
+            """SELECT bool_and(fidelity <= 1 AND rules <> '') , count(*) FROM run_surrogates s
+               JOIN runs r ON r.id = s.run_id WHERE r.experiment = 'teste-integracao'"""
+        ).fetchone() == (True, 3)
+        # Every main run flags at least p·n records, so the overlap counts cover at least that many records.
+        overlap = conn.execute(
+            "SELECT p, sum(algorithm_count * record_count) FROM experiment_overlaps "
+            "WHERE experiment = 'teste-integracao' GROUP BY p ORDER BY p"
+        ).fetchall()
+        flagged = run_metrics.merge(
+            pd.DataFrame({"run_id": [data.main_run(a) for a in report.ALGORITHMS]})
+        ).groupby("p")["flagged_count"].sum()
+        assert [int(n) for _, n in overlap] == [int(flagged[p]) for p in report.P_VALUES]
         text = report.render(data, run_metrics, run_comparisons)
         for heading in ("Tempo de execução", "Proporção", "Concordância", "Estabilidade", "Características",
                         "Interpretabilidade", "artefato do LOF"):

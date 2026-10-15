@@ -127,6 +127,18 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
         Assert.Equal(3, mainRuns.Count);
         Assert.All(mainRuns, r => Assert.Equal(3, r.GetProperty("metrics").GetArrayLength()));
         Assert.Equal(9, detail.GetProperty("agreement").GetArrayLength());
+
+        // Characteristics, interpretability and overlaps (migration 008): every main run, at the three values of p.
+        var profiles = detail.GetProperty("profiles").EnumerateArray().ToList();
+        Assert.Equal(
+            ["dominant_feature", "favored_type", "feature_median", "reference_month", "superior_agency"],
+            profiles.Select(x => x.GetProperty("dimension").GetString()!).Distinct().Order());
+        Assert.All(profiles.GroupBy(x => x.GetProperty("dimension").GetString()), g =>
+            Assert.Equal(9, g.Select(x => (x.GetProperty("algorithm").GetString(), x.GetProperty("p").GetDouble())).Distinct().Count()));
+        var surrogates = detail.GetProperty("surrogates").EnumerateArray().ToList();
+        Assert.Equal(3, surrogates.Count);
+        Assert.All(surrogates, x => Assert.InRange(x.GetProperty("fidelity").GetDouble(), -1, 1));
+        Assert.Equal(9, detail.GetProperty("overlaps").GetArrayLength());
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync("/api/experiments/unknown")).StatusCode);
     }
 

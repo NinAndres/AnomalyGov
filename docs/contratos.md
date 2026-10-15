@@ -159,6 +159,26 @@ Definidos em `PaymentsAdapter.filters` (`ml/src/anomalygov_ml/sources/payments.p
 | `record_features` | `source`, `record_id`, `values` (float8[] na ordem de `sources.feature_columns`). Features dos registros da amostra publicada, calculadas no banco local sobre o ano inteiro (decisão 0005) e gravadas pela publicação, que substitui as anteriores da mesma base. |
 | `sources.feature_columns` | Nomes das features, na ordem de `record_features.values`. |
 
+### `run_profiles`, `run_surrogates` e `experiment_overlaps` (008)
+
+Calculadas por `python -m anomalygov_ml.report <experimento>` para as execuções principais, com os mesmos números do relatório em `docs/resultados/`, e copiadas pela publicação (decisão 0012). Reprocessar substitui as linhas das mesmas execuções. RLS ativo, sem políticas.
+
+| Tabela | Colunas | Descrição |
+|---|---|---|
+| `run_profiles` | `run_id`, `p`, `dimension`, `category`, `value`, `baseline` | Características dos sinalizados por execução principal e limiar. PK (`run_id`, `p`, `dimension`, `category`). |
+| `run_surrogates` | `run_id` (PK), `depth`, `fidelity`, `rules` | Árvore substituta: profundidade, R² e regras em texto (decisão 0007). |
+| `experiment_overlaps` | `experiment`, `p`, `algorithm_count`, `record_count` | Registros da amostra principal sinalizados por exatamente `algorithm_count` algoritmos. |
+
+Significado de `value` e `baseline` em `run_profiles`:
+
+| `dimension` | `category` | `value` | `baseline` |
+|---|---|---|---|
+| `favored_type` | Tipo de favorecido | Taxa ponderada de sinalização no tipo | Participação ponderada do tipo na população |
+| `reference_month` | `AAAA-MM` | Taxa ponderada de sinalização no mês | Participação ponderada do mês na população |
+| `superior_agency` | Nome do órgão superior (só os com sinalizados) | Participação ponderada entre os sinalizados | Participação ponderada na população |
+| `feature_median` | Nome da feature, ou `amount` (valor em R$) | Mediana entre os sinalizados | Mediana na amostra |
+| `dominant_feature` | Nome da feature | Proporção dos sinalizados cuja feature dominante é a categoria | Nula |
+
 ## Formato de `filters` e `params` dos jobs
 
 Validados pelo backend contra a definição em `sources` (`JobRequestValidator`). Todos os filtros são opcionais; filtros desconhecidos são rejeitados.
@@ -219,7 +239,7 @@ Base `/api`, JSON em camelCase, erros no formato Problem Details (RFC 9457) com 
 | `GET /api/jobs/{id}` | Estado do job (o frontend consulta até concluir) |
 | `GET /api/jobs/{id}/records?algorithm=&page=&pageSize=` | Registros sinalizados do job (409 se o job não terminou com sucesso) |
 | `GET /api/experiments` | Experimentos publicados |
-| `GET /api/experiments/{name}` | Execuções principais com métricas, concordância, estabilidade, escalabilidade e testes de hipóteses |
+| `GET /api/experiments/{name}` | Execuções principais com métricas, concordância, estabilidade, escalabilidade, testes de hipóteses e, da migration 008, `profiles` (`algorithm`, `p`, `dimension`, `category`, `value`, `baseline`), `surrogates` (`algorithm`, `depth`, `fidelity`, `rules`) e `overlaps` (`p`, `algorithmCount`, `recordCount`) |
 | `GET /api/experiments/{name}/records?p=&algorithm=&page=&pageSize=` | Registros sinalizados pelas execuções principais |
 
 ## Formato dos resultados

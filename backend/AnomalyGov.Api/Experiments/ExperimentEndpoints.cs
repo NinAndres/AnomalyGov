@@ -27,10 +27,18 @@ public sealed record HypothesisTest(
     string Hypothesis, string Family, string Test, string Variable, int N, double? Statistic, double? Effect,
     double? CiLow, double? CiHigh, double? PValue, double? PAdjusted, JsonElement Details);
 
+/// <summary>Characteristic of the records flagged by a main run; value and baseline per dimension (migration 008).</summary>
+public sealed record RunProfile(string Algorithm, double P, string Dimension, string Category, double? Value, double? Baseline);
+
+public sealed record Surrogate(string Algorithm, int Depth, double? Fidelity, string Rules);
+
+public sealed record Overlap(double P, int AlgorithmCount, int RecordCount);
+
 public sealed record ExperimentDetail(
     string Name, string Source, int MainSampleId, IReadOnlyList<MainRun> MainRuns, IReadOnlyList<Agreement> Agreement,
     IReadOnlyList<StabilityComparison> Stability, IReadOnlyList<ScalabilityPoint> Scalability,
-    IReadOnlyList<HypothesisTest> HypothesisTests);
+    IReadOnlyList<HypothesisTest> HypothesisTests, IReadOnlyList<RunProfile> Profiles,
+    IReadOnlyList<Surrogate> Surrogates, IReadOnlyList<Overlap> Overlaps);
 
 public sealed class ExperimentRepository(NpgsqlDataSource dataSource)
 {
@@ -97,6 +105,30 @@ public sealed class ExperimentRepository(NpgsqlDataSource dataSource)
                 Json.Finite(t.PAdjusted), Json.Parse(t.Details)!.Value))
             .ToList();
 
+        var mainIds = new { ids = main.Select(r => r.Id).ToArray() };
+        var profiles = (await conn.QueryAsync<(string Algorithm, double P, string Dimension, string Category,
+            double Value, double? Baseline)>(new CommandDefinition("""
+            SELECT r.algorithm, pr.p::float8, pr.dimension, pr.category, pr.value, pr.baseline
+            FROM run_profiles pr JOIN runs r ON r.id = pr.run_id
+            WHERE pr.run_id = ANY(@ids) ORDER BY pr.dimension, pr.p, r.algorithm, pr.category
+            """, mainIds, cancellationToken: ct)))
+            .Select(x => new RunProfile(x.Algorithm, x.P, x.Dimension, x.Category, Json.Finite(x.Value),
+                Json.Finite(x.Baseline)))
+            .ToList();
+
+        var surrogates = (await conn.QueryAsync<(string Algorithm, int Depth, double Fidelity, string Rules)>(
+            new CommandDefinition("""
+            SELECT r.algorithm, s.depth, s.fidelity, s.rules
+            FROM run_surrogates s JOIN runs r ON r.id = s.run_id WHERE s.run_id = ANY(@ids) ORDER BY r.algorithm
+            """, mainIds, cancellationToken: ct)))
+            .Select(x => new Surrogate(x.Algorithm, x.Depth, Json.Finite(x.Fidelity), x.Rules))
+            .ToList();
+
+        var overlaps = (await conn.QueryAsync<Overlap>(new CommandDefinition("""
+            SELECT p::float8 AS p, algorithm_count AS algorithmcount, record_count AS recordcount
+            FROM experiment_overlaps WHERE experiment = @name ORDER BY p, algorithm_count
+            """, args, cancellationToken: ct))).ToList();
+
         var mainRuns = main.Select(r => new MainRun(r.Id, r.Algorithm, Json.Parse(r.Params)!.Value, r.RandomState,
             r.NTrain, r.FitSeconds, r.ScoreSeconds,
             metrics[r.Id].Select(m => new RunMetric(m.P, m.FlaggedCount, m.FlaggedShare, m.WeightedFlaggedShare)).ToList()))
@@ -111,7 +143,8 @@ public sealed class ExperimentRepository(NpgsqlDataSource dataSource)
                     Json.Finite(c.Jaccard), Json.Finite(c.Spearman)))
             .ToList();
 
-        return new ExperimentDetail(name, main[0].Source, main[0].SampleId, mainRuns, agreement, stability, scalability, tests);
+        return new ExperimentDetail(name, main[0].Source, main[0].SampleId, mainRuns, agreement, stability, scalability, tests,
+            profiles, surrogates, overlaps);
     }
 }
 

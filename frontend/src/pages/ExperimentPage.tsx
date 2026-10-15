@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { api, type RecordsQuery } from "../api/client";
 import {
@@ -7,13 +7,31 @@ import {
   type ExperimentDetail,
   type HypothesisTest,
   type MainRun,
+  type RunProfile,
+  type SourceDefinition,
   type StabilityComparison,
 } from "../api/types";
 import { useApi } from "../api/useApi";
+import {
+  AgreementChart,
+  DataStabilityChart,
+  DominantFeatureChart,
+  H1cChart,
+  H2Chart,
+  MonthRateChart,
+  OverlapChart,
+  ParameterStabilityChart,
+  samePValue,
+  ScalabilityChart,
+  SurrogateChart,
+  TimeChart,
+  TypeRateChart,
+  WeightedShareChart,
+} from "../charts/ExperimentCharts";
 import { FlaggedTable } from "../components/FlaggedTable";
 import { Loading, Notice } from "../components/Layout";
 import { P_OPTIONS } from "../filters/FilterForm";
-import { ALGORITHM_LABELS, formatNumber, formatPercent, formatPValue } from "../format";
+import { ALGORITHM_LABELS, compareFeatures, featureLabel, formatMonth, formatNumber, formatPercent, formatPValue } from "../format";
 
 /** Lists the experiments; with a single one, opens it directly. */
 export function ExperimentsPage() {
@@ -60,6 +78,8 @@ export function ExperimentPage() {
         <a href="#concordancia">Concordância</a>
         <a href="#estabilidade">Estabilidade</a>
         <a href="#escalabilidade">Escalabilidade</a>
+        {detail.profiles.length > 0 && <a href="#caracteristicas">Características dos sinalizados</a>}
+        {detail.surrogates.length > 0 && <a href="#interpretabilidade">Interpretabilidade</a>}
         {detail.hypothesisTests.length > 0 && <a href="#hipoteses">Hipóteses</a>}
         <a href="#registros">Registros sinalizados</a>
       </nav>
@@ -67,6 +87,8 @@ export function ExperimentPage() {
       <AgreementSection detail={detail} />
       <StabilitySection detail={detail} />
       <ScalabilitySection detail={detail} />
+      {detail.profiles.length > 0 && <CharacteristicsSection profiles={detail.profiles} source={source} />}
+      {detail.surrogates.length > 0 && <InterpretabilitySection detail={detail} />}
       {detail.hypothesisTests.length > 0 && <HypothesesSection tests={detail.hypothesisTests} />}
       <section id="registros">
         <h2>Registros sinalizados</h2>
@@ -98,6 +120,10 @@ function MainRunsSection({ runs }: { runs: MainRun[] }) {
   return (
     <section id="execucao">
       <h2>Configuração principal: tempo e proporção de sinalizados</h2>
+      <div className="chart-grid">
+        <TimeChart runs={runs} />
+        <WeightedShareChart runs={runs} pOptions={P_OPTIONS} />
+      </div>
       <div className="table-scroll">
         <table>
           <thead>
@@ -146,6 +172,10 @@ function AgreementSection({ detail }: { detail: ExperimentDetail }) {
     <section id="concordancia">
       <h2>Concordância entre os algoritmos</h2>
       <p>Jaccard dos conjuntos sinalizados (1 = mesmos registros, 0 = nenhum em comum) e Spearman dos escores.</p>
+      <div className="chart-grid">
+        <AgreementChart agreement={detail.agreement} pOptions={P_OPTIONS} />
+        {detail.overlaps.length > 0 && <OverlapChart overlaps={detail.overlaps} />}
+      </div>
       <div className="table-scroll">
         <table>
           <thead>
@@ -180,7 +210,41 @@ function AgreementSection({ detail }: { detail: ExperimentDetail }) {
           </tbody>
         </table>
       </div>
+      {detail.overlaps.length > 0 && <OverlapTable detail={detail} />}
     </section>
+  );
+}
+
+function OverlapTable({ detail }: { detail: ExperimentDetail }) {
+  const counts = [...new Set(detail.overlaps.map((o) => o.algorithmCount))].sort((a, b) => a - b);
+  const ps = [...new Set(detail.overlaps.map((o) => o.p))].sort((a, b) => a - b);
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">p</th>
+            {counts.map((k) => (
+              <th key={k} scope="col" className="num">
+                {k === 1 ? "Sinalizado por 1 algoritmo" : `Por ${k}`}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {ps.map((p) => (
+            <tr key={p}>
+              <th scope="row">{formatPercent(p, 0)}</th>
+              {counts.map((k) => (
+                <td key={k} className="num">
+                  {formatNumber(detail.overlaps.find((o) => samePValue(o.p, p) && o.algorithmCount === k)?.recordCount)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -201,6 +265,7 @@ function StabilitySection({ detail }: { detail: ExperimentDetail }) {
         Cada algoritmo treinado em amostras diferentes pontua a amostra principal. Jaccard com a configuração
         principal: mediana (mínimo–máximo).
       </p>
+      <DataStabilityChart stability={detail.stability} p={0.01} />
       <div className="table-scroll">
         <table>
           <thead>
@@ -240,6 +305,7 @@ function StabilitySection({ detail }: { detail: ExperimentDetail }) {
       </div>
       <h3>Frente aos parâmetros</h3>
       <p>Cada variação comparada com a configuração principal do mesmo algoritmo (p = 1%).</p>
+      <ParameterStabilityChart stability={detail.stability} describe={describeParams} />
       <div className="table-scroll">
         <table>
           <thead>
@@ -273,6 +339,7 @@ function ScalabilitySection({ detail }: { detail: ExperimentDetail }) {
     <section id="escalabilidade">
       <h2>Escalabilidade</h2>
       <p>Tempo total (treino + pontuação), média e faixa entre repetições. “—” indica tamanho não executado.</p>
+      <ScalabilityChart points={detail.scalability} />
       <div className="table-scroll">
         <table>
           <thead>
@@ -308,6 +375,252 @@ function ScalabilitySection({ detail }: { detail: ExperimentDetail }) {
   );
 }
 
+function typeLabeler(source: SourceDefinition | null): (type: string) => string {
+  const options = source?.filters.find((f) => f.name === "favored_type")?.options ?? [];
+  return (type) => options.find((o) => o.value === type)?.label ?? type;
+}
+
+function profileValue(profiles: RunProfile[], algorithm: Algorithm, category: string): number | null {
+  return profiles.find((x) => x.algorithm === algorithm && x.category === category)?.value ?? null;
+}
+
+const categoriesOf = (rows: RunProfile[]) => [...new Set(rows.map((x) => x.category))];
+
+function CharacteristicsSection({ profiles, source }: { profiles: RunProfile[]; source: SourceDefinition | null }) {
+  const [p, setP] = useState(P_OPTIONS[0]);
+  const at = (dimension: RunProfile["dimension"]) => profiles.filter((x) => x.dimension === dimension && samePValue(x.p, p));
+  const typeLabel = typeLabeler(source);
+  const types = at("favored_type");
+  const months = at("reference_month");
+  const medians = at("feature_median");
+  const agencies = at("superior_agency");
+  const dominant = at("dominant_feature");
+  return (
+    <section id="caracteristicas">
+      <h2>Características dos registros sinalizados</h2>
+      <div className="toolbar">
+        <label>
+          Limiar p{" "}
+          <select value={p} onChange={(e) => setP(Number(e.target.value))}>
+            {P_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {formatPercent(option, 0)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="toolbar-info">Taxas e participações ponderadas pelos pesos amostrais: estimam a população.</span>
+      </div>
+
+      <h3>Por tipo de favorecido</h3>
+      <TypeRateChart profiles={profiles} p={p} typeLabel={typeLabel} />
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Tipo</th>
+              <th scope="col" className="num">Na população</th>
+              {ALGORITHMS.map((a) => (
+                <th key={a} scope="col" className="num">
+                  Taxa {ALGORITHM_LABELS[a]}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {categoriesOf(types).map((t) => (
+              <tr key={t}>
+                <th scope="row">{typeLabel(t)}</th>
+                <td className="num">{formatPercent(types.find((x) => x.category === t)?.baseline, 1)}</td>
+                {ALGORITHMS.map((a) => (
+                  <td key={a} className="num">
+                    {formatPercent(profileValue(types, a, t), 2)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Por mês</h3>
+      <MonthRateChart profiles={profiles} p={p} />
+      <details>
+        <summary>Tabela por mês</summary>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Mês</th>
+                {ALGORITHMS.map((a) => (
+                  <th key={a} scope="col" className="num">
+                    Taxa {ALGORITHM_LABELS[a]}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {categoriesOf(months)
+                .sort()
+                .map((m) => (
+                  <tr key={m}>
+                    <th scope="row">{formatMonth(m)}</th>
+                    {ALGORITHMS.map((a) => (
+                      <td key={a} className="num">
+                        {formatPercent(profileValue(months, a, m), 2)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+
+      <h3>Features: mediana na amostra × mediana dos sinalizados</h3>
+      <p className="hint">As features têm escalas diferentes, por isso aparecem em tabela. Medianas sem ponderação (decisão 0007).</p>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Feature</th>
+              <th scope="col" className="num">Amostra</th>
+              {ALGORITHMS.map((a) => (
+                <th key={a} scope="col" className="num">
+                  Sinalizados {ALGORITHM_LABELS[a]}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {categoriesOf(medians).sort(compareFeatures).map((c) => (
+              <tr key={c}>
+                <th scope="row">{featureLabel(c)}</th>
+                <td className="num">{formatNumber(medians.find((x) => x.category === c)?.baseline, 2)}</td>
+                {ALGORITHMS.map((a) => (
+                  <td key={a} className="num">
+                    {formatNumber(profileValue(medians, a, c), 2)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Órgãos superiores com mais sinalizados</h3>
+      <p className="hint">Participação ponderada entre os sinalizados de cada algoritmo (os cinco maiores) e na população.</p>
+      <div className="agency-grid">
+        {ALGORITHMS.map((a) => {
+          const top = agencies
+            .filter((x) => x.algorithm === a)
+            .sort((x, y) => (y.value ?? 0) - (x.value ?? 0))
+            .slice(0, 5);
+          return (
+            <div key={a} className="table-scroll">
+              <table>
+                <caption>{ALGORITHM_LABELS[a]}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Órgão superior</th>
+                    <th scope="col" className="num">Sinalizados</th>
+                    <th scope="col" className="num">População</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {top.map((x) => (
+                    <tr key={x.category}>
+                      <td>{x.category}</td>
+                      <td className="num">{formatPercent(x.value, 1)}</td>
+                      <td className="num">{formatPercent(x.baseline, 1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+
+      <h3>Feature dominante</h3>
+      <DominantFeatureChart profiles={profiles} p={p} />
+      <details>
+        <summary>Tabela da feature dominante</summary>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                {ALGORITHMS.map((a) => (
+                  <th key={a} scope="col" className="num">
+                    {ALGORITHM_LABELS[a]}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {categoriesOf(dominant).sort(compareFeatures).map((c) => (
+                <tr key={c}>
+                  <th scope="row">{featureLabel(c)}</th>
+                  {ALGORITHMS.map((a) => (
+                    <td key={a} className="num">
+                      {formatPercent(profileValue(dominant, a, c), 1)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function InterpretabilitySection({ detail }: { detail: ExperimentDetail }) {
+  const surrogates = ALGORITHMS.flatMap((a) => detail.surrogates.filter((s) => s.algorithm === a));
+  return (
+    <section id="interpretabilidade">
+      <h2>Interpretabilidade</h2>
+      <p>
+        Uma árvore de regressão rasa é treinada para imitar o escore normalizado de cada algoritmo. A fidelidade (R²)
+        indica quanto da lógica do algoritmo cabe em poucas regras simples; não mede acerto.
+      </p>
+      <SurrogateChart surrogates={detail.surrogates} />
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Algoritmo</th>
+              <th scope="col" className="num">Profundidade</th>
+              <th scope="col" className="num">Fidelidade (R²)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {surrogates.map((s) => (
+              <tr key={s.algorithm}>
+                <th scope="row">{ALGORITHM_LABELS[s.algorithm]}</th>
+                <td className="num">{s.depth}</td>
+                <td className="num">{formatNumber(s.fidelity, 3)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {surrogates.map((s) => (
+        <details key={s.algorithm}>
+          <summary>Regras da árvore substituta: {ALGORITHM_LABELS[s.algorithm]}</summary>
+          <p className="hint">
+            Limiares nas unidades originais das features; <code>value</code> é o escore normalizado médio da folha (perto
+            de 1 = anômalo).
+          </p>
+          <pre className="rules">{s.rules}</pre>
+        </details>
+      ))}
+    </section>
+  );
+}
+
 const FAMILY_TITLES: Record<string, string> = {
   H2: "H2: Isolation Forest × LOF entre meses (unilateral: IF mais estável)",
   H2_context: "Contexto da H2: Isolation Forest × One-Class SVM",
@@ -325,6 +638,10 @@ function HypothesesSection({ tests }: { tests: HypothesisTest[] }) {
         Correção de Holm dentro de cada família; em destaque, os testes com p ajustado abaixo de α. Os testes indicam
         associação ou diferença nos dados observados, não causa (exceto a manipulação controlada).
       </p>
+      <div className="chart-grid">
+        <H2Chart tests={tests} />
+        <H1cChart tests={tests} />
+      </div>
       {families.map((family) => {
         const rows = tests.filter((t) => t.family === family);
         const alpha = rows[0]?.details.alpha ?? 0.05;

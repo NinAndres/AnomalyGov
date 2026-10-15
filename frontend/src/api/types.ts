@@ -138,6 +138,44 @@ export interface HypothesisTest {
   details: Record<string, unknown> & { alpha?: number };
 }
 
+/** Dimensions of the characteristics of the flagged records (docs/contratos.md, migration 008). */
+export type ProfileDimension =
+  | "favored_type"
+  | "reference_month"
+  | "superior_agency"
+  | "feature_median"
+  | "dominant_feature";
+
+/**
+ * One characteristic of the records flagged by a main run. favored_type and reference_month: value = weighted
+ * flagged rate, baseline = weighted share of the population; superior_agency: value = weighted share among the
+ * flagged, baseline = share of the population; feature_median: value = median among the flagged, baseline = median
+ * of the sample; dominant_feature: value = share of the flagged, baseline = null.
+ */
+export interface RunProfile {
+  algorithm: Algorithm;
+  p: number;
+  dimension: ProfileDimension;
+  category: string;
+  value: number | null;
+  baseline: number | null;
+}
+
+/** Global surrogate: shallow regression tree imitating the normalized scores of a main run. */
+export interface Surrogate {
+  algorithm: Algorithm;
+  depth: number;
+  fidelity: number | null;
+  rules: string;
+}
+
+/** Records of the main sample flagged by exactly algorithmCount algorithms. */
+export interface Overlap {
+  p: number;
+  algorithmCount: number;
+  recordCount: number;
+}
+
 export interface ExperimentDetail {
   name: string;
   source: string;
@@ -147,6 +185,9 @@ export interface ExperimentDetail {
   stability: StabilityComparison[];
   scalability: ScalabilityPoint[];
   hypothesisTests: HypothesisTest[];
+  profiles: RunProfile[];
+  surrogates: Surrogate[];
+  overlaps: Overlap[];
 }
 
 export interface ProblemDetails {

@@ -99,8 +99,23 @@ export const EXPERIMENT: ExperimentDetail = {
       ciHigh: 0.242,
       pValue: 2.8e-20,
       pAdjusted: 5.7e-20,
-      details: { alpha: 0.05 },
+      details: { alpha: 0.05, median_jaccard_if: 0.677, median_jaccard_other: 0.481, median_if_seed_noise: 0.886 },
     },
+  ],
+  profiles: [
+    { algorithm: "isolation_forest", p: 0.01, dimension: "favored_type", category: "company", value: 0.0148, baseline: 0.304 },
+    { algorithm: "lof", p: 0.01, dimension: "favored_type", category: "company", value: 0.0032, baseline: 0.304 },
+    { algorithm: "isolation_forest", p: 0.01, dimension: "reference_month", category: "2025-01", value: 0.0075, baseline: 0.07 },
+    { algorithm: "isolation_forest", p: 0.01, dimension: "superior_agency", category: "Ministério da Educação", value: 0.397, baseline: 0.2 },
+    { algorithm: "isolation_forest", p: 0.01, dimension: "feature_median", category: "amount", value: 39429.62, baseline: 1032 },
+    { algorithm: "isolation_forest", p: 0.01, dimension: "dominant_feature", category: "amount_vs_ug", value: 0.326, baseline: null },
+    { algorithm: "isolation_forest", p: 0.05, dimension: "favored_type", category: "company", value: 0.06, baseline: 0.304 },
+  ],
+  surrogates: [{ algorithm: "lof", depth: 3, fidelity: 0.22, rules: "|--- favored_ug_count <= 2.60\n" }],
+  overlaps: [
+    { p: 0.01, algorithmCount: 1, recordCount: 910 },
+    { p: 0.01, algorithmCount: 2, recordCount: 240 },
+    { p: 0.01, algorithmCount: 3, recordCount: 105 },
   ],
 };
 
