@@ -9,6 +9,7 @@ Registros sinalizados são **estatisticamente atípicos** e não indicam fraude,
 - Contratos (banco, jobs, API): [`docs/contratos.md`](docs/contratos.md)
 - Bases e exclusões: [`docs/datasets.md`](docs/datasets.md)
 - Resultados do experimento: [`docs/resultados/principal-2025.md`](docs/resultados/principal-2025.md)
+- Figuras do artigo: [`docs/resultados/figuras/principal-2025/`](docs/resultados/figuras/principal-2025/legendas.md)
 
 ## Arquitetura
 
@@ -53,6 +54,8 @@ set -a && . ../.env && set +a   # DATABASE_URL e SUPABASE_DATABASE_URL
 .venv/Scripts/python -m anomalygov_ml.hypotheses experiments/configs/principal-2025-hipoteses.toml
 # 3. Métricas e relatório
 .venv/Scripts/python -m anomalygov_ml.report principal-2025 --out ../docs/resultados/principal-2025.md
+# Figuras do artigo (PNG 300 dpi e SVG), a partir das tabelas gravadas pelo relatório
+.venv/Scripts/python -m anomalygov_ml.figures principal-2025
 # 4. Publicação no Supabase (migrations aplicadas antes)
 .venv/Scripts/python -m anomalygov_ml.publish principal-2025
 ```

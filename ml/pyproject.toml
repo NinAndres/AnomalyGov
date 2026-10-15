@@ -16,7 +16,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+# Figures of the article (anomalygov_ml.figures); the worker does not need them.
+figures = ["matplotlib"]
+dev = ["pytest", "matplotlib"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
