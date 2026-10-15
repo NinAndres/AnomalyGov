@@ -9,7 +9,7 @@ Registros sinalizados são **estatisticamente atípicos** e não indicam fraude,
 - Contratos (banco, jobs, API): [`docs/contratos.md`](docs/contratos.md)
 - Bases e exclusões: [`docs/datasets.md`](docs/datasets.md)
 - Resultados do experimento: [`docs/resultados/principal-2025.md`](docs/resultados/principal-2025.md)
-- Figuras do artigo: [`docs/resultados/figuras/principal-2025/`](docs/resultados/figuras/principal-2025/legendas.md)
+- Figuras do artigo: geradas localmente em `docs/resultados/figuras/principal-2025/` (não versionadas; ver decisão 0013)
 
 ## Arquitetura
 
