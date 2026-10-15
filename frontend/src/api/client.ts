@@ -31,6 +31,7 @@ function describeStatus(status: number): string {
   if (status === 0) return "Não foi possível conectar à API.";
   if (status === 404) return "Recurso não encontrado.";
   if (status === 429) return "Muitas requisições. Tente novamente em instantes.";
+  if (status === 503) return "Banco de dados indisponível no momento. Tente novamente em instantes.";
   if (status >= 500) return "Erro interno no servidor.";
   return `Erro ${status}.`;
 }

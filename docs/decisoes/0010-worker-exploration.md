@@ -16,6 +16,7 @@ O backend cria jobs (decisão 0009), mas não executa algoritmos. O worker Pytho
 - **Atomicidade:** execuções, escores e conclusão do job são gravados numa única transação.
 - **Retenção:** jobs concluídos são apagados após 24 h. Um job com o recorte máximo grava cerca de 150 mil escores (~13 MB); sem retenção, o limite do Supabase seria atingido em poucas dezenas de jobs. Os resultados do modo exploration não entram no artigo (AGENTS.md, seção 10).
 - **Recuperação:** jobs presos em `running` por mais de 30 min (worker interrompido) são marcados como falhos.
+- **Reconexão:** se a conexão com o banco cair, o worker tenta reconectar a cada 10 s, em vez de terminar. Motivo: a conexão direta do Supabase só tem IPv6, e na rede de desenvolvimento ela oscilou.
 
 ## Consequências
 

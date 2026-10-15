@@ -209,7 +209,7 @@ Implementado em `ml/src/anomalygov_ml/worker.py` (decisão 0010): `python -m ano
 
 ## API (backend)
 
-Base `/api`, JSON em camelCase, erros no formato Problem Details (RFC 9457) com títulos em português. Projeto em `backend/AnomalyGov.Api`.
+Base `/api`, JSON em camelCase, erros no formato Problem Details (RFC 9457) com títulos em português. Projeto em `backend/AnomalyGov.Api`. Falha de conexão com o banco responde **503** com `Retry-After: 5`; erros de SQL respondem 500.
 
 | Método e rota | Descrição |
 |---|---|

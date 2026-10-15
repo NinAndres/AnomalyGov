@@ -30,6 +30,7 @@ from anomalygov_ml.models import DETECTORS
 ALGORITHMS = ("isolation_forest", "lof", "one_class_svm")
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 EXPERIMENT = "exploration"
+RECONNECT_SECONDS = 10
 log = logging.getLogger("anomalygov.worker")
 
 
@@ -235,15 +236,25 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
 
-    with psycopg.connect(os.environ["SUPABASE_DATABASE_URL"], autocommit=True) as conn:
-        worker = Worker(conn, args.config, Settings.from_env())
-        log.info("worker iniciado (amostra %s)", worker.sample_id)
-        while True:
-            processed = worker.run_once()
+    settings = Settings.from_env()
+    while True:
+        try:
+            with psycopg.connect(os.environ["SUPABASE_DATABASE_URL"], autocommit=True, connect_timeout=20,
+                                 keepalives_idle=30) as conn:
+                worker = Worker(conn, args.config, settings)
+                log.info("worker conectado (amostra %s)", worker.sample_id)
+                while True:
+                    processed = worker.run_once()
+                    if args.once:
+                        return
+                    if not processed:
+                        time.sleep(args.poll)
+        except psycopg.OperationalError as error:
+            # Network failure: a job left in 'running' is recovered by housekeeping after the stale timeout.
             if args.once:
-                break
-            if not processed:
-                time.sleep(args.poll)
+                raise
+            log.warning("conexão perdida (%s); nova tentativa em %ss", str(error).splitlines()[0], RECONNECT_SECONDS)
+            time.sleep(RECONNECT_SECONDS)
 
 
 if __name__ == "__main__":

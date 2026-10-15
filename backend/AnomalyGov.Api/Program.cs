@@ -9,11 +9,19 @@ using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(PostgresUrl.Resolve(builder.Configuration)));
+builder.Services.AddSingleton(_ =>
+{
+    // Opening a connection is the step that fails on an unstable network: keep one open and alive.
+    var connection = new NpgsqlConnectionStringBuilder(PostgresUrl.Resolve(builder.Configuration));
+    if (connection.KeepAlive == 0) connection.KeepAlive = 30;
+    if (connection.MinPoolSize == 0) connection.MinPoolSize = 1;
+    return NpgsqlDataSource.Create(connection.ConnectionString);
+});
 builder.Services.AddSingleton<SourceRepository>();
 builder.Services.AddSingleton<JobRepository>();
 builder.Services.AddSingleton<ExperimentRepository>();
 builder.Services.AddSingleton<FlaggedRecords>();
+builder.Services.AddExceptionHandler<DatabaseUnavailableHandler>();
 // Interface texts are in Portuguese (AGENTS.md, section 11), including error titles.
 builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
     context.ProblemDetails.Title = context.ProblemDetails.Status switch
@@ -23,6 +31,7 @@ builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = 
         StatusCodes.Status409Conflict => "Conflito com o estado atual do recurso.",
         StatusCodes.Status429TooManyRequests => "Muitas requisições. Tente novamente em instantes.",
         StatusCodes.Status500InternalServerError => "Erro interno.",
+        StatusCodes.Status503ServiceUnavailable => "Banco de dados indisponível no momento. Tente novamente em instantes.",
         _ => context.ProblemDetails.Title,
     });
 
