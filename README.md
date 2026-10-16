@@ -30,6 +30,7 @@ React → API C# → Supabase (jobs, resultados) ← worker Python
 - Python 3.11+ (testado com 3.14), .NET SDK 9, Node 20.18+, Docker.
 - **O caminho do projeto não pode conter `#`**: o Vite e o Vitest não funcionam nesse caso (decisão 0011).
 - Arquivo `.env` na raiz, a partir do [`.env.example`](.env.example). Ele nunca é versionado.
+- No `SUPABASE_DATABASE_URL`, usar a connection string do **Session Pooler** (IPv4), e não a conexão direta, que só tem IPv6 (nota na decisão 0010).
 
 ## Banco local (Docker)
 
@@ -86,4 +87,3 @@ Sem as variáveis, os testes de integração são pulados.
 ## Pendências conhecidas
 
 - **Autenticação:** a API não tem login. A criação de jobs é limitada por IP (decisão 0009). Decidir antes de publicar a aplicação.
-- **Conexão com o Supabase:** a conexão direta (`db.<projeto>.supabase.co`) só tem IPv6 e oscilou na rede de desenvolvimento. O ideal é usar a connection string do **Session Pooler** (IPv4) no `SUPABASE_DATABASE_URL`.
