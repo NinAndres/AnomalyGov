@@ -21,6 +21,7 @@ from anomalygov_ml.portal.client import PortalClient
 from anomalygov_ml.sources.payments import MAD_OFFSET
 
 FIRST_MONTH = "2015-01"
+FIRST_VALID_YEAR = 1901  # the Portal uses 1900-01-01 for an unknown date
 # Only these favored types have their name shown (LGPD, AGENTS.md section 5.2).
 NAMED_TYPES = ("company", "management_unit")
 FAVORED_TYPE_LABELS = {
@@ -40,6 +41,8 @@ def pick(item: dict[str, Any], path: str) -> Any:
         value = value.get(key)
     if isinstance(value, str):
         value = value.strip()
+        if value.lower().startswith("sem informa"):  # "Sem informação", e.g. classified card expenses
+            return None
     return None if value in (None, "") else value
 
 
@@ -63,19 +66,22 @@ def parse_date(value: Any) -> date | None:
     """Date from the API: ISO, DD/MM/AAAA, MM/AAAA or the integer AAAAMM (first day of the month)."""
     if value is None:
         return None
+    parsed = None
     if isinstance(value, int):
         year, month = divmod(value, 100)
-        return date(year, month, 1) if 1 <= month <= 12 else None
-    text = str(value).strip()
-    for parse in (lambda t: date.fromisoformat(t[:10]),
-                  lambda t: datetime.strptime(t, "%d/%m/%Y").date(),
-                  lambda t: datetime.strptime(t, "%m/%Y").date(),
-                  lambda t: datetime.strptime(t, "%Y%m").date()):
-        try:
-            return parse(text)
-        except ValueError:
-            continue
-    return None
+        parsed = date(year, month, 1) if 1 <= month <= 12 and year >= 1 else None
+    else:
+        text = str(value).strip()
+        for parse in (lambda t: date.fromisoformat(t[:10]),
+                      lambda t: datetime.strptime(t, "%d/%m/%Y").date(),
+                      lambda t: datetime.strptime(t, "%m/%Y").date(),
+                      lambda t: datetime.strptime(t, "%Y%m").date()):
+            try:
+                parsed = parse(text)
+                break
+            except ValueError:
+                continue
+    return parsed if parsed is not None and parsed.year >= FIRST_VALID_YEAR else None
 
 
 def classify_favored(document: str | None, always_individual: bool = False) -> str:
@@ -112,20 +118,28 @@ def months_between(first: str, last: str) -> list[str]:
     return months
 
 
-def month_params(start: str, end: str) -> Callable[[date, date], dict[str, str]]:
-    return lambda first, last: {start: first.strftime("%m/%Y"), end: first.strftime("%m/%Y")}
+# Each builder returns the parameter sets queried for one month (first and last day). The API accepts date ranges of
+# at most one month (checked on 2026-10-27).
+PeriodParams = Callable[[date, date], list[dict[str, str]]]
 
 
-def date_params(start: str, end: str) -> Callable[[date, date], dict[str, str]]:
-    return lambda first, last: {start: first.strftime("%d/%m/%Y"), end: last.strftime("%d/%m/%Y")}
+def month_params(start: str, end: str) -> PeriodParams:
+    return lambda first, last: [{start: first.strftime("%m/%Y"), end: first.strftime("%m/%Y")}]
 
 
-def travel_params(first: date, last: date) -> dict[str, str]:
-    # Trips that start in the month; the return may fall in the month or in the next one.
+def date_params(start: str, end: str) -> PeriodParams:
+    return lambda first, last: [{start: first.strftime("%d/%m/%Y"), end: last.strftime("%d/%m/%Y")}]
+
+
+def travel_params(first: date, last: date) -> list[dict[str, str]]:
+    # Trips that start in the month and return in it or in the next one. The return range is also limited to one
+    # month, hence two queries.
     next_first = date(first.year + (first.month == 12), first.month % 12 + 1, 1)
     next_last = date(next_first.year, next_first.month, calendar.monthrange(next_first.year, next_first.month)[1])
-    return {"dataIdaDe": first.strftime("%d/%m/%Y"), "dataIdaAte": last.strftime("%d/%m/%Y"),
-            "dataRetornoDe": first.strftime("%d/%m/%Y"), "dataRetornoAte": next_last.strftime("%d/%m/%Y")}
+    departure = {"dataIdaDe": first.strftime("%d/%m/%Y"), "dataIdaAte": last.strftime("%d/%m/%Y")}
+    return [{**departure, "dataRetornoDe": first.strftime("%d/%m/%Y"), "dataRetornoAte": last.strftime("%d/%m/%Y")},
+            {**departure, "dataRetornoDe": next_first.strftime("%d/%m/%Y"),
+             "dataRetornoAte": next_last.strftime("%d/%m/%Y")}]
 
 
 def days_between(item: dict[str, Any], start: str, end: str) -> float | None:
@@ -189,8 +203,8 @@ class PortalBase:
     label: str
     endpoint: str
     agency_param: str
-    period: Callable[[date, date], dict[str, str]]
-    date: str
+    period: PeriodParams
+    dates: tuple[str, ...]  # paths tried in order; the first valid date is used
     values: tuple[str, ...]  # paths tried in order; the first positive value is used
     unit_code: str
     unit_name: str
@@ -201,6 +215,7 @@ class PortalBase:
     extras: tuple[Extra, ...] = ()
     period_label: str = "Mês"
     first_month: str = FIRST_MONTH
+    last_month: str | None = None  # last month with data, when the API stopped being updated
     extra_display: tuple[tuple[str, str], ...] = ()  # (column, path) shown as is
 
     @property
@@ -235,7 +250,7 @@ BASES: dict[str, PortalBase] = {base.name: base for base in (
         endpoint="/despesas/recursos-recebidos",
         agency_param="orgao",
         period=month_params("mesAnoInicio", "mesAnoFim"),
-        date="anoMes",
+        dates=("anoMes",),
         values=("valor",),
         unit_code="codigoUG",
         unit_name="nomeUG",
@@ -249,7 +264,7 @@ BASES: dict[str, PortalBase] = {base.name: base for base in (
         endpoint="/cartoes",
         agency_param="codigoOrgao",
         period=month_params("mesExtratoInicio", "mesExtratoFim"),
-        date="dataTransacao",
+        dates=("dataTransacao", "mesExtrato"),  # classified expenses come without the transaction date
         values=("valorTransacao",),
         unit_code="unidadeGestora.codigo",
         unit_name="unidadeGestora.nome",
@@ -266,7 +281,7 @@ BASES: dict[str, PortalBase] = {base.name: base for base in (
         endpoint="/viagens",
         agency_param="codigoOrgao",
         period=travel_params,
-        date="dataInicioAfastamento",
+        dates=("dataInicioAfastamento",),
         values=("valorTotalViagem",),
         unit_code="unidadeGestoraResponsavel.codigo",
         unit_name="unidadeGestoraResponsavel.nome",
@@ -286,7 +301,7 @@ BASES: dict[str, PortalBase] = {base.name: base for base in (
         endpoint="/contratos",
         agency_param="codigoOrgao",
         period=date_params("dataInicial", "dataFinal"),
-        date="dataAssinatura",
+        dates=("dataAssinatura", "dataInicioVigencia"),
         values=("valorFinalCompra", "valorInicialCompra"),
         unit_code="unidadeGestora.codigo",
         unit_name="unidadeGestora.nome",
@@ -301,11 +316,12 @@ BASES: dict[str, PortalBase] = {base.name: base for base in (
     PortalBase(
         name="portal_biddings",
         period_label="Mês de abertura",
+        last_month="2024-04",  # no biddings in the API after April 2024 (checked on 2026-10-27)
         label="Licitações (API do Portal)",
         endpoint="/licitacoes",
         agency_param="codigoOrgao",
         period=date_params("dataInicial", "dataFinal"),
-        date="dataAbertura",
+        dates=("dataAbertura", "dataPublicacao"),
         values=("valor",),
         unit_code="unidadeGestora.codigo",
         unit_name="unidadeGestora.nome",
@@ -316,12 +332,13 @@ BASES: dict[str, PortalBase] = {base.name: base for base in (
     ),
     PortalBase(
         name="portal_agreements",
-        period_label="Mês de referência",
+        period_label="Vigência no mês",
         label="Convênios e transferências (API do Portal)",
         endpoint="/convenios",
         agency_param="codigoOrgao",
-        period=date_params("dataInicial", "dataFinal"),
-        date="dataReferencia",
+        # dataInicial/dataFinal filter dataReferencia, the date of the last update of the record: use the validity.
+        period=date_params("dataVigenciaInicial", "dataVigenciaFinal"),
+        dates=("dataInicioVigencia", "dataPublicacao"),
         values=("valor",),
         unit_code="unidadeGestora.codigo",
         unit_name="unidadeGestora.nome",
@@ -350,14 +367,13 @@ def fetch(client: PortalClient, base: PortalBase, agency: str, first_month: str,
     items: list[dict[str, Any]] = []
     start = client.requests
     for month in months_between(first_month, last_month):
-        first, last = month_bounds(month)
-        params = {base.agency_param: agency, **base.period(first, last)}
-        for page in client.pages(base.endpoint, params):
-            items.extend(page)
-            if on_page:
-                on_page(month, len(items))
-            if len(items) >= max_rows:
-                return FetchResult(items[:max_rows], client.requests - start, True)
+        for period in base.period(*month_bounds(month)):
+            for page in client.pages(base.endpoint, {base.agency_param: agency, **period}):
+                items.extend(page)
+                if on_page:
+                    on_page(month, len(items))
+                if len(items) >= max_rows:
+                    return FetchResult(items[:max_rows], client.requests - start, True)
     return FetchResult(items, client.requests - start, False)
 
 
@@ -374,7 +390,7 @@ def normalize(base: PortalBase, items: list[dict[str, Any]]) -> tuple[pd.DataFra
                 excluded["duplicate"] += 1
                 continue
             seen.add(portal_id)
-        record_date = parse_date(pick(item, base.date))
+        record_date = next((d for d in (parse_date(pick(item, p)) for p in base.dates) if d is not None), None)
         if record_date is None:
             excluded["missing_date"] += 1
             continue

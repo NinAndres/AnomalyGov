@@ -9,7 +9,7 @@ import pytest
 
 from anomalygov_ml.portal.bases import (
     BASES, classify_favored, compute_features, display_values, fetch, months_between, normalize, parse_date,
-    parse_value, travel_params,
+    parse_value, pick, travel_params,
 )
 from anomalygov_ml.portal.client import MAX_RETRIES, PortalClient, PortalError
 from anomalygov_ml.portal.register import definition
@@ -147,9 +147,30 @@ def test_classify_favored(document, expected):
 
 def test_months_and_travel_params():
     assert months_between("2024-11", "2025-02") == ["2024-11", "2024-12", "2025-01", "2025-02"]
-    params = travel_params(date(2025, 12, 1), date(2025, 12, 31))
-    assert params == {"dataIdaDe": "01/12/2025", "dataIdaAte": "31/12/2025",
-                      "dataRetornoDe": "01/12/2025", "dataRetornoAte": "31/01/2026"}
+    # The API rejects ranges longer than one month ("O período deve ser de no máximo 1 mês."), also for the return.
+    assert travel_params(date(2025, 12, 1), date(2025, 12, 31)) == [
+        {"dataIdaDe": "01/12/2025", "dataIdaAte": "31/12/2025", "dataRetornoDe": "01/12/2025",
+         "dataRetornoAte": "31/12/2025"},
+        {"dataIdaDe": "01/12/2025", "dataIdaAte": "31/12/2025", "dataRetornoDe": "01/01/2026",
+         "dataRetornoAte": "31/01/2026"},
+    ]
+
+
+def test_missing_markers_and_sentinel_dates_are_treated_as_missing():
+    assert pick({"a": {"b": "Sem informação"}}, "a.b") is None
+    assert pick({"tipo": "Sem Informação"}, "tipo") is None
+    assert parse_date("1900-01-01") is None
+
+
+def test_classified_card_expenses_fall_back_to_the_statement_month():
+    # Seen in the API: classified expenses come with "Sem informação" in the date and the establishment.
+    base = BASES["portal_cards"]
+    item = {"id": 1, "mesExtrato": "03/2025", "dataTransacao": "Sem informação", "valorTransacao": "502,10",
+            "estabelecimento": {"tipo": "Sem Informação", "nome": "Sem informação"}, "unidadeGestora": unit()}
+    df, excluded = normalize(base, [item])
+    assert sum(excluded.values()) == 0
+    assert df.loc[0, "date"] == "2025-03-01" and df.loc[0, "value"] == 502.10
+    assert df.loc[0, "favored_type"] == "other" and df.loc[0, "favored_name"] is None
 
 
 def unit(code="170013"):
@@ -219,7 +240,7 @@ def test_names_of_individuals_are_never_kept(name):
 def test_normalize_excludes_duplicates_missing_dates_and_non_positive_values():
     base = BASES["portal_contracts"]
     good = sample_item("portal_contracts", 1)
-    items = [good, dict(good), {**sample_item("portal_contracts", 2), "dataAssinatura": None},
+    items = [good, dict(good), {**sample_item("portal_contracts", 2), "dataAssinatura": None, "dataInicioVigencia": None},
              {**sample_item("portal_contracts", 3), "valorFinalCompra": 0, "valorInicialCompra": -1},
              {**sample_item("portal_contracts", 4), "valorFinalCompra": None}]
     df, excluded = normalize(base, items)
@@ -263,3 +284,5 @@ def test_definition_requires_one_agency_and_a_bounded_period():
     assert period["type"] == "month_range" and period["required"] and period["maxMonths"] == 12
     assert (period["min"], period["max"]) == ("2015-01", "2026-10")
     assert d["feature_columns"] == list(BASES["portal_travel"].feature_columns)
+    # Bases no longer updated by the Portal stop at their last month with data.
+    assert definition(BASES["portal_biddings"], agencies, "2026-10")["filters"][1]["max"] == "2024-04"

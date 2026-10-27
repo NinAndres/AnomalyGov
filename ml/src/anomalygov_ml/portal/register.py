@@ -35,7 +35,7 @@ def definition(base: PortalBase, agencies: list[dict[str, str]], last_month: str
             {"name": "agency_code", "type": "select", "label": "Órgão", "options": agencies,
              "required": True, "maxSelected": 1},
             {"name": "period", "type": "month_range", "label": base.period_label, "min": base.first_month,
-             "max": last_month, "required": True, "maxMonths": MAX_MONTHS},
+             "max": min(last_month, base.last_month or last_month), "required": True, "maxMonths": MAX_MONTHS},
         ],
         "display_columns": list(base.display_columns),
         "feature_columns": list(base.feature_columns),
