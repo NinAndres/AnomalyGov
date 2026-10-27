@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AnomalyGov.Api.Sources;
 using Dapper;
 using Npgsql;
@@ -16,6 +17,8 @@ public sealed record FlaggedPage(
 
 /// <summary>Records flagged by at least one run of a set of runs that scored the same records.</summary>
 /// <remarks>
+/// Sample sources keep their scores in run_scores and their display columns in the `<source>_display` view; Portal
+/// sources keep them in portal_scores and in the `values` json of portal_records (db/migrations/009).
 /// Same rule as ml/src/anomalygov_ml/metrics.py: a record is flagged by a run when its raw score is greater than
 /// or equal to the (1 - p) quantile of the run's scores, with linear interpolation (percentile_cont = numpy).
 /// </remarks>
@@ -43,24 +46,28 @@ public sealed class FlaggedRecords(NpgsqlDataSource dataSource)
             $"coalesce(bool_or(flagged) FILTER (WHERE algorithm = '{a}'), false) AS flag_{a}, " +
             $"max(normalized_score) FILTER (WHERE algorithm = '{a}') AS score_{a}"));
         var algorithmCondition = algorithm is null ? "true" : $"agg.flag_{algorithm}";
+        var portal = source.Kind == SourceDefinition.Portal;
+        var (scores, recordId, display) = portal
+            ? ("portal_scores", "record_id", "portal_records")
+            : ("run_scores", "payment_id", source.DisplayView);
         var sql = $"""
             WITH r AS (SELECT id, algorithm FROM runs WHERE {runFilter}),
             q AS (
                 SELECT s.run_id, percentile_cont(1 - @p) WITHIN GROUP (ORDER BY s.raw_score) AS threshold
-                FROM run_scores s JOIN r ON r.id = s.run_id GROUP BY s.run_id),
+                FROM {scores} s JOIN r ON r.id = s.run_id GROUP BY s.run_id),
             f AS (
-                SELECT s.payment_id, r.algorithm, s.normalized_score::float8 AS normalized_score,
+                SELECT s.{recordId} AS record_id, r.algorithm, s.normalized_score::float8 AS normalized_score,
                        s.raw_score >= q.threshold AS flagged
-                FROM run_scores s JOIN r ON r.id = s.run_id JOIN q ON q.run_id = s.run_id),
+                FROM {scores} s JOIN r ON r.id = s.run_id JOIN q ON q.run_id = s.run_id),
             agg AS (
-                SELECT payment_id, {perAlgorithm},
+                SELECT record_id, {perAlgorithm},
                        count(*) FILTER (WHERE flagged)::int AS flagged_count,
                        max(normalized_score) FILTER (WHERE flagged) AS max_flagged_score
-                FROM f GROUP BY payment_id HAVING bool_or(flagged))
-            SELECT count(*) OVER () AS total, agg.*, d.*
-            FROM agg JOIN {source.DisplayView} d ON d.id = agg.payment_id
+                FROM f GROUP BY record_id HAVING bool_or(flagged))
+            SELECT count(*) OVER () AS total, agg.*, {(portal ? "d.\"values\"::text AS portal_values" : "d.*")}
+            FROM agg JOIN {display} d ON d.id = agg.record_id
             WHERE {algorithmCondition}
-            ORDER BY agg.flagged_count DESC, agg.max_flagged_score DESC, agg.payment_id
+            ORDER BY agg.flagged_count DESC, agg.max_flagged_score DESC, agg.record_id
             LIMIT @limit OFFSET @offset
             """;
 
@@ -70,11 +77,12 @@ public sealed class FlaggedRecords(NpgsqlDataSource dataSource)
             .ToList();
 
         var items = rows.Select(row => new FlaggedRecord(
-            Convert.ToInt64(row["payment_id"]),
+            Convert.ToInt64(row["record_id"]),
             Convert.ToInt32(row["flagged_count"]),
             Algorithms.ToDictionary(a => a, a => (bool)row[$"flag_{a}"]!),
             Algorithms.ToDictionary(a => a, a => row[$"score_{a}"] is double s ? s : (double?)null),
-            source.DisplayColumns.ToDictionary(c => c, c => row.TryGetValue(c, out var v) ? v : null))).ToList();
+            portal ? PortalValues(source, (string)row["portal_values"]!) : source.DisplayColumns.ToDictionary(
+                c => c, c => row.TryGetValue(c, out var v) ? v : null))).ToList();
         long total;
         if (rows.Count > 0)
         {
@@ -89,5 +97,14 @@ public sealed class FlaggedRecords(NpgsqlDataSource dataSource)
         }
 
         return new FlaggedPage(p, algorithm, page, pageSize, total, items);
+    }
+
+    private static Dictionary<string, object?> PortalValues(SourceDefinition source, string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return source.DisplayColumns.ToDictionary(c => c, c =>
+            document.RootElement.TryGetProperty(c, out var v) && v.ValueKind != JsonValueKind.Null
+                ? (object?)v.Clone()
+                : null);
     }
 }

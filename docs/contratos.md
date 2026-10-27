@@ -88,7 +88,7 @@ Uma linha por execução de algoritmo (AGENTS.md, seção 7).
 | `params` | jsonb | Hiperparâmetros completos efetivos (inclui `n_neighbors` derivado e `max_duplicate_group` no LOF) |
 | `random_state` | integer | Semente do algoritmo (nula quando determinístico) |
 | `feature_columns` | text[] | Features usadas, na ordem da matriz |
-| `train_sample_id` | integer | Amostra de treino (FK `samples`) |
+| `train_sample_id` | integer | Amostra de treino (FK `samples`); nula só no modo `exploration` sobre bases do Portal (009) |
 | `scored_sample_id` | integer | Amostra pontuada; nula na escalabilidade (só tempos) |
 | `n_train`, `n_scored` | integer | Registros de treino e pontuados |
 | `fit_seconds`, `score_seconds` | double precision | Tempos. No LOF sem `novelty`, a pontuação acontece no treino. |
@@ -179,9 +179,34 @@ Significado de `value` e `baseline` em `run_profiles`:
 | `feature_median` | Nome da feature, ou `amount` (valor em R$) | Mediana entre os sinalizados | Mediana na amostra |
 | `dominant_feature` | Nome da feature | Proporção dos sinalizados cuja feature dominante é a categoria | Nula |
 
+### Bases da API do Portal (009)
+
+Decisão 0014. Os jobs dessas bases não usam a amostra publicada: o worker busca o recorte na API do Portal da Transparência.
+
+| Objeto | Descrição |
+|---|---|
+| `sources.kind` | `sample` (padrão; recortes da amostra publicada, como `payments`) ou `portal` |
+| `jobs.progress` | Andamento gravado pelo worker durante o job (jsonb, nulo antes de começar): `{"phase": "fetching" \| "scoring", "month": "AAAA-MM", "received": 450, "requests": 31}` |
+| `runs.train_sample_id` | Pode ser nulo quando `mode = 'exploration'` (restrição `runs_train_sample_check`) |
+| `portal_records` | `id`, `job_id` (FK `jobs`, apagado com o job), `values` (jsonb com as `display_columns` da base, já sem dados de pessoa física), `features` (float8[] na ordem de `sources.feature_columns`) |
+| `portal_scores` | `run_id`, `record_id` (FK `portal_records`), `raw_score`, `normalized_score`; mesmo significado de `run_scores` |
+
+As seis bases, gravadas por `python -m anomalygov_ml.portal.register`, são `portal_payments`, `portal_cards`, `portal_travel`, `portal_contracts`, `portal_biddings` e `portal_agreements`. Todas têm os mesmos dois filtros, ambos obrigatórios:
+
+| `name` | `type` | Regras |
+|---|---|---|
+| `agency_code` | `select` | Exatamente um órgão (`maxSelected: 1`), código SIAFI de 5 dígitos |
+| `period` | `month_range` | Mês inicial e final obrigatórios, até 12 meses (`maxMonths: 12`) |
+
+As colunas de exibição de cada base estão em `PortalBase.display_columns` (`ml/src/anomalygov_ml/portal/bases.py`): `date` (AAAA-MM-DD), `favored_type` e `favored_name` (quando a base tem favorecido), `management_unit_name`, a categoria da base (`card_type`, `travel_situation`, `purchase_modality`, `bidding_modality` ou `agreement_situation`), colunas extras (`uf`, `bidding_situation`), `value` e `portal_id` (id do registro no Portal).
+
 ## Formato de `filters` e `params` dos jobs
 
-Validados pelo backend contra a definição em `sources` (`JobRequestValidator`). Todos os filtros são opcionais; filtros desconhecidos são rejeitados.
+Validados pelo backend contra a definição em `sources` (`JobRequestValidator`). Filtros desconhecidos são rejeitados. Os filtros são opcionais, salvo os que têm `required: true` na definição. Propriedades opcionais de cada filtro em `sources.filters`:
+
+- `required`: o job precisa usar o filtro;
+- `maxSelected` (`select`): máximo de valores escolhidos;
+- `maxMonths` (`month_range`): exige os dois limites e um intervalo de no máximo esse número de meses.
 
 | Tipo de filtro | Formato | Regras |
 |---|---|---|
@@ -211,9 +236,15 @@ Implementado em `ml/src/anomalygov_ml/worker.py` (decisão 0010): `python -m ano
 
 1. **Limpeza**, a cada ciclo: jobs em `running` há mais de `EXPLORATION_STALE_MINUTES` (padrão 30) viram `failed` ("processamento interrompido"). Jobs concluídos há mais de `EXPLORATION_RETENTION_HOURS` (padrão 24) são apagados, junto com suas execuções e escores.
 2. **Reserva:** `SELECT ... FROM jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`, depois `status = 'running'` e `started_at = now()`.
-3. **Recorte:** registros de `<source>_display` que atendem aos filtros e têm features em `record_features`. Cada filtro corresponde à coluna de mesmo nome da view. Com menos de `EXPLORATION_MIN_ROWS` (padrão 100), o job falha com uma mensagem para o usuário. Com mais de `EXPLORATION_MAX_ROWS` (padrão 50.000), sorteia esse número com semente derivada do id do job.
+3. **Recorte** (bases `sample`): registros de `<source>_display` que atendem aos filtros e têm features em `record_features`. Cada filtro corresponde à coluna de mesmo nome da view. Com menos de `EXPLORATION_MIN_ROWS` (padrão 100), o job falha com uma mensagem para o usuário. Com mais de `EXPLORATION_MAX_ROWS` (padrão 50.000), sorteia esse número com semente derivada do id do job.
 4. **Execução:** os três algoritmos com a configuração principal do experimento (`--config`), sobre as features do recorte com `RobustScaler` ajustado no próprio recorte. As anomalias são **relativas ao recorte**.
 5. **Gravação, numa única transação:** uma linha em `runs` por algoritmo (`mode = 'exploration'`, `purpose = 'main'`, `experiment = 'exploration'`, `job_id`, `train_sample_id` e `scored_sample_id` = amostra principal publicada, `subset` = `{filters, sampled, sample_seed}`), os escores em `run_scores`, e o job com `status = 'succeeded'`, `finished_at` e `result`. Em erro, nada é gravado e o job fica `failed` com uma mensagem sem detalhes internos.
+
+**Bases `portal`** (decisão 0014). Os passos 3 a 5 mudam:
+
+- **Recorte:** o worker consulta a API mês a mês, para o órgão e o período do job, com o controle de taxa e as novas tentativas do cliente. Ele grava `progress` a cada 3 s, no máximo, e para em `EXPLORATION_PORTAL_MAX_ROWS` registros (padrão 10.000). Depois descarta os repetidos, os sem data e os sem valor positivo. Com menos de `EXPLORATION_MIN_ROWS` registros utilizáveis, o job falha. Erros da API (chave recusada, falta de resposta após as tentativas) também fazem o job falhar, com mensagem para o usuário.
+- **Execução:** as features são calculadas dentro do recorte e escaladas com `RobustScaler`.
+- **Gravação, numa única transação:** registros em `portal_records`, execuções com `train_sample_id` e `scored_sample_id` nulos e `subset = {filters, portal}`, escores em `portal_scores` e o job concluído.
 
 `result` (jsonb):
 
@@ -227,6 +258,17 @@ Implementado em `ml/src/anomalygov_ml/worker.py` (decisão 0010): `python -m ano
 }
 ```
 
+Nas bases `portal`, `n_filtered` e `n_used` são os registros utilizáveis, `sampled` é sempre `false`, e há o campo extra `portal`:
+
+```json
+"portal": {
+  "requests": 667, "received": 10000, "truncated": true, "max_rows": 10000,
+  "excluded": {"duplicate": 0, "missing_date": 4, "non_positive_value": 6}
+}
+```
+
+`truncated: true` significa que o recorte analisado contém os primeiros registros devolvidos pelo Portal, e não o período inteiro.
+
 ## API (backend)
 
 Base `/api`, JSON em camelCase, erros no formato Problem Details (RFC 9457) com títulos em português. Projeto em `backend/AnomalyGov.Api`. Falha de conexão com o banco responde **503** com `Retry-After: 5`; erros de SQL respondem 500.
@@ -234,9 +276,9 @@ Base `/api`, JSON em camelCase, erros no formato Problem Details (RFC 9457) com 
 | Método e rota | Descrição |
 |---|---|
 | `GET /api/health` | Verifica a conexão com o banco |
-| `GET /api/sources`, `GET /api/sources/{name}` | Definição das bases (filtros com opções, colunas de exibição) |
+| `GET /api/sources`, `GET /api/sources/{name}` | Definição das bases (`kind`, filtros com opções e regras, colunas de exibição); as bases `sample` vêm primeiro |
 | `POST /api/jobs` | Cria um job `pending` (201 + `Location`); 400 com `errors` por campo (`filters.<nome>`, `params.p`); limitado por IP (`RateLimiting:JobsPerMinute`, padrão 10/min) |
-| `GET /api/jobs/{id}` | Estado do job (o frontend consulta até concluir) |
+| `GET /api/jobs/{id}` | Estado do job, com `progress` (o frontend consulta até concluir) |
 | `GET /api/jobs/{id}/records?algorithm=&page=&pageSize=` | Registros sinalizados do job (409 se o job não terminou com sucesso) |
 | `GET /api/experiments` | Experimentos publicados |
 | `GET /api/experiments/{name}` | Execuções principais com métricas, concordância, estabilidade, escalabilidade, testes de hipóteses e, da migration 008, `profiles` (`algorithm`, `p`, `dimension`, `category`, `value`, `baseline`), `surrogates` (`algorithm`, `depth`, `fidelity`, `rules`) e `overlaps` (`p`, `algorithmCount`, `recordCount`) |
@@ -261,4 +303,4 @@ Os registros sinalizados (`/records`) seguem a regra da decisão 0006: sinalizad
 }
 ```
 
-`scores` são os escores normalizados (posto percentual em (0, 1]). `values` traz as `display_columns` da base com os nomes de coluna originais. Valores não finitos (NaN, infinito) são devolvidos como `null`.
+`scores` são os escores normalizados (posto percentual em (0, 1]). `values` traz as `display_columns` da base com os nomes de coluna originais: lidos da view `<source>_display` nas bases `sample` e do `values` de `portal_records` nas bases `portal`. Nas bases `portal`, `paymentId` é o id em `portal_records`; o nome foi mantido por compatibilidade. Valores não finitos (NaN, infinito) são devolvidos como `null`.

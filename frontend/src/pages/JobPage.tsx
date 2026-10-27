@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError, type RecordsQuery } from "../api/client";
-import type { Filters, Job, SourceDefinition } from "../api/types";
+import type { Filters, Job, JobResult, SourceDefinition } from "../api/types";
 import { useApi } from "../api/useApi";
 import { FlaggedTable } from "../components/FlaggedTable";
 import { Loading, Notice } from "../components/Layout";
@@ -81,6 +81,12 @@ export function JobPage() {
           </span>
           {!finished && <span className="hint"> atualizando automaticamente…</span>}
         </dd>
+        {!finished && job.progress && (
+          <>
+            <dt>Andamento</dt>
+            <dd aria-live="polite">{describeProgress(job.progress)}</dd>
+          </>
+        )}
         <dt>Filtros</dt>
         <dd>{source ? describeFilters(job.filters, source) : "…"}</dd>
         <dt>Limiar</dt>
@@ -93,12 +99,20 @@ export function JobPage() {
             <dd>
               {formatNumber(job.result.n_filtered)} no recorte
               {job.result.sampled && `, ${formatNumber(job.result.n_used)} sorteados para a execução`}
+              {job.result.portal && describeDownload(job.result.portal)}
             </dd>
           </>
         )}
       </dl>
       {error && <Notice kind="warning">Falha ao atualizar a situação: {error.message} Tentando novamente…</Notice>}
       {job.status === "failed" && <Notice kind="error">{job.error}</Notice>}
+      {job.result?.portal?.truncated && (
+        <Notice kind="warning">
+          A consulta foi interrompida no limite de {formatNumber(job.result.portal.max_rows)} registros da exploração.
+          O recorte analisado contém <strong>os primeiros registros devolvidos pelo Portal</strong>, não uma amostra
+          aleatória do período. Para analisar o período inteiro, reduza o intervalo de meses.
+        </Notice>
+      )}
       {job.result?.sampled && (
         <Notice kind="warning">
           O recorte tem mais registros que o limite da exploração. Os algoritmos foram executados sobre uma amostra
@@ -115,6 +129,29 @@ export function JobPage() {
         </>
       )}
     </section>
+  );
+}
+
+const EXCLUSION_LABELS: Record<string, string> = {
+  duplicate: "repetidos",
+  missing_date: "sem data",
+  non_positive_value: "sem valor positivo",
+};
+
+function describeProgress(progress: NonNullable<Job["progress"]>): string {
+  const counts = `${formatNumber(progress.received)} registros recebidos em ${formatNumber(progress.requests)} requisições`;
+  if (progress.phase === "scoring") return `Download concluído (${counts}). Executando os algoritmos…`;
+  return `Consultando a API do Portal${progress.month ? ` (${formatMonth(progress.month)})` : ""}: ${counts}…`;
+}
+
+function describeDownload(portal: NonNullable<JobResult["portal"]>): string {
+  const excluded = Object.entries(portal.excluded)
+    .filter(([, n]) => n > 0)
+    .map(([reason, n]) => `${formatNumber(n)} ${EXCLUSION_LABELS[reason] ?? reason}`);
+  return (
+    ` (${formatNumber(portal.received)} recebidos da API do Portal em ${formatNumber(portal.requests)} requisições` +
+    (excluded.length ? `; descartados: ${excluded.join(", ")}` : "") +
+    ")"
   );
 }
 

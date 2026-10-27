@@ -1,7 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { EXPERIMENT, job, mockApi, PAGE, SOURCE } from "../test/fixtures";
+import { EXPERIMENT, job, mockApi, PAGE, PORTAL_SOURCE, SOURCE } from "../test/fixtures";
 import { ExperimentPage } from "./ExperimentPage";
 import { ExplorePage } from "./ExplorePage";
 import { JobPage, POLL_INTERVAL_MS } from "./JobPage";
@@ -95,6 +95,45 @@ describe("JobPage", () => {
     });
     renderAt(`/exploracao/jobs/${job().id}`);
     expect(await screen.findByText("O recorte tem 3 registros; o mínimo é 100. Amplie os filtros.")).toBeInTheDocument();
+  });
+
+  it("shows the download progress and the notices of a Portal API job", async () => {
+    const portalJob = (overrides: Parameters<typeof job>[0]) =>
+      job({ source: "portal_contracts", filters: { agency_code: ["26000"], period: { from: "2025-01", to: "2025-03" } }, ...overrides });
+    const states = [
+      portalJob({ status: "running", startedAt: "2026-10-15T10:00:01Z",
+        progress: { phase: "fetching", month: "2025-02", received: 450, requests: 31 } }),
+      portalJob({
+        status: "succeeded",
+        startedAt: "2026-10-15T10:00:01Z",
+        finishedAt: "2026-10-15T10:09:00Z",
+        result: {
+          n_filtered: 9990, n_used: 9990, sampled: false, sample_seed: null,
+          runs: { isolation_forest: 1, lof: 2, one_class_svm: 3 },
+          portal: { requests: 667, received: 10000, excluded: { duplicate: 0, missing_date: 4, non_positive_value: 6 },
+            truncated: true, max_rows: 10000 },
+        },
+      }),
+    ];
+    mockApi({
+      "GET /api/sources": () => [SOURCE, PORTAL_SOURCE],
+      [`GET /api/jobs/${job().id}`]: () => states.shift() ?? states[0],
+      [`GET /api/jobs/${job().id}/records`]: () => ({ ...PAGE, items: [{ ...PAGE.items[0],
+        values: { date: "2025-02-10", favored_type: "company", favored_name: "EMPRESA X", purchase_modality: "Pregão",
+          value: 50000, portal_id: "123" } }] }),
+    });
+    renderAt(`/exploracao/jobs/${job().id}`);
+
+    expect(await screen.findByText(/Consultando a API do Portal \(fev\/2025\): 450 registros recebidos em 31 requisições/))
+      .toBeInTheDocument();
+    expect(screen.getByText(/Órgão: Ministério da Educação \(26000\)/)).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS));
+    expect(await screen.findByText("Concluído")).toBeInTheDocument();
+    expect(screen.getByText(/10\.000 recebidos da API do Portal em 667 requisições; descartados: 4 sem data, 6 sem valor positivo/))
+      .toBeInTheDocument();
+    expect(screen.getByText(/os primeiros registros devolvidos pelo Portal/)).toBeInTheDocument();
+    expect(await screen.findByText("Pregão")).toBeInTheDocument();
+    expect(screen.getByText("10/02/2025")).toBeInTheDocument();
   });
 
   it("explains that results expire when the job no longer exists", async () => {

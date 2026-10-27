@@ -44,4 +44,11 @@ describe("formatValue", () => {
     expect(formatValue("amount", 10, {}, FILTERS)).toContain("10,00");
     expect(formatValue("uf", null, {}, FILTERS)).toBe("—");
   });
+
+  it("formats the columns of the Portal API bases", () => {
+    expect(formatValue("value", 1234.5, {}, [])).toContain("1.234,50");
+    expect(formatValue("date", "2025-03-14", {}, [])).toBe("14/03/2025");
+    expect(formatValue("favored_type", "management_unit", {}, [])).toBe("Unidade gestora federal");
+    expect(formatValue("favored_name", null, { favored_type: "other" }, [])).toBe("Não identificado (oculto)");
+  });
 });

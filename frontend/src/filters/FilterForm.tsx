@@ -43,7 +43,10 @@ export function FilterForm({ source, errors, submitting, onSubmit }: Props) {
         const fieldErrors = errors[`filters.${filter.name}`];
         return (
           <fieldset key={filter.name} className="filter" aria-invalid={fieldErrors ? true : undefined}>
-            <legend>{filter.label}</legend>
+            <legend>
+              {filter.label}
+              {filter.required && <span className="required"> (obrigatório)</span>}
+            </legend>
             {filter.type === "month_range" && (
               <MonthRangeInput filter={filter} value={values[filter.name] as MonthRange} onChange={set(filter.name)} />
             )}
@@ -99,12 +102,13 @@ function MonthRangeInput({ filter, value, onChange }: InputProps<MonthRange>) {
     [filter.min, filter.max],
   );
   const update = (key: keyof MonthRange, month: string) => onChange({ ...value, [key]: month || undefined });
+  const bounded = Boolean(filter.maxMonths);
   return (
     <div className="range">
       <label>
         De{" "}
         <select value={value?.from ?? ""} onChange={(e) => update("from", e.target.value)}>
-          <option value="">início</option>
+          <option value="">{bounded ? "selecione" : "início"}</option>
           {months.map((m) => (
             <option key={m} value={m}>
               {formatMonth(m)}
@@ -115,7 +119,7 @@ function MonthRangeInput({ filter, value, onChange }: InputProps<MonthRange>) {
       <label>
         Até{" "}
         <select value={value?.to ?? ""} onChange={(e) => update("to", e.target.value)}>
-          <option value="">fim</option>
+          <option value="">{bounded ? "selecione" : "fim"}</option>
           {months.map((m) => (
             <option key={m} value={m}>
               {formatMonth(m)}
@@ -123,6 +127,7 @@ function MonthRangeInput({ filter, value, onChange }: InputProps<MonthRange>) {
           ))}
         </select>
       </label>
+      {bounded && <p className="hint">Até {filter.maxMonths} meses por consulta.</p>}
     </div>
   );
 }
@@ -156,8 +161,12 @@ function MultiSelectInput({ filter, value, onChange }: InputProps<string[]>) {
     const term = search.trim().toLocaleLowerCase("pt-BR");
     return term ? options.filter((o) => `${o.label} ${o.value}`.toLocaleLowerCase("pt-BR").includes(term)) : options;
   }, [options, search]);
-  const toggle = (option: string) =>
-    onChange(selected.includes(option) ? selected.filter((v) => v !== option) : [...selected, option]);
+  const single = filter.maxSelected === 1;
+  const toggle = (option: string) => {
+    if (selected.includes(option)) onChange(selected.filter((v) => v !== option));
+    else if (single) onChange([option]);
+    else if (!filter.maxSelected || selected.length < filter.maxSelected) onChange([...selected, option]);
+  };
   const labelOf = (option: string) => options.find((o) => o.value === option)?.label ?? option;
 
   return (
@@ -180,7 +189,8 @@ function MultiSelectInput({ filter, value, onChange }: InputProps<string[]>) {
       <div className="options" role="group" aria-label={`Opções de ${filter.label}`}>
         {matches.slice(0, VISIBLE_OPTIONS).map((option) => (
           <label key={option.value} className="option">
-            <input type="checkbox" checked={selected.includes(option.value)} onChange={() => toggle(option.value)} />
+            <input type={single ? "radio" : "checkbox"} name={single ? filter.name : undefined}
+              checked={selected.includes(option.value)} onChange={() => toggle(option.value)} />
             {option.label}
           </label>
         ))}

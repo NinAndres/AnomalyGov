@@ -22,6 +22,31 @@ export const SOURCE: SourceDefinition = {
   displayColumns: ["reference_month", "favored_type", "favored_name", "amount"],
 };
 
+/** A Portal API base as registered by anomalygov_ml.portal.register (decision 0014). */
+export const PORTAL_SOURCE: SourceDefinition = {
+  name: "portal_contracts",
+  label: "Contratos (API do Portal)",
+  kind: "portal",
+  filters: [
+    {
+      name: "agency_code",
+      type: "select",
+      label: "Órgão",
+      options: [
+        { value: "26000", label: "Ministério da Educação (26000)" },
+        { value: "36000", label: "Ministério da Saúde (36000)" },
+      ],
+      min: null,
+      max: null,
+      required: true,
+      maxSelected: 1,
+    },
+    { name: "period", type: "month_range", label: "Vigência no mês", options: null, min: "2025-01", max: "2025-12",
+      required: true, maxMonths: 12 },
+  ],
+  displayColumns: ["date", "favored_type", "favored_name", "purchase_modality", "value", "portal_id"],
+};
+
 export const PAGE: FlaggedPage = {
   p: 0.01,
   algorithm: null,

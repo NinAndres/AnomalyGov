@@ -2,7 +2,15 @@ import { useState } from "react";
 import type { RecordsQuery } from "../api/client";
 import { ALGORITHMS, type Algorithm, type FlaggedPage, type SourceDefinition } from "../api/types";
 import { useApi } from "../api/useApi";
-import { ALGORITHM_LABELS, ALGORITHM_SHORT, columnLabel, formatNumber, formatPercent, formatValue } from "../format";
+import {
+  ALGORITHM_LABELS,
+  ALGORITHM_SHORT,
+  columnLabel,
+  formatNumber,
+  formatPercent,
+  formatValue,
+  MONEY_COLUMNS,
+} from "../format";
 import { Loading, Notice } from "./Layout";
 
 const PAGE_SIZE = 25;
@@ -80,7 +88,7 @@ export function FlaggedTable({ load, source, pOptions }: Props) {
               <tr>
                 <th scope="col">Sinalizado por</th>
                 {source.displayColumns.map((c) => (
-                  <th key={c} scope="col" className={c === "amount" ? "num" : undefined}>
+                  <th key={c} scope="col" className={MONEY_COLUMNS.includes(c) ? "num" : undefined}>
                     {columnLabel(c)}
                   </th>
                 ))}
@@ -103,7 +111,7 @@ export function FlaggedTable({ load, source, pOptions }: Props) {
                     </span>
                   </td>
                   {source.displayColumns.map((c) => (
-                    <td key={c} className={c === "amount" ? "num" : undefined}>
+                    <td key={c} className={MONEY_COLUMNS.includes(c) ? "num" : undefined}>
                       {formatValue(c, item.values[c] ?? null, item.values, source.filters)}
                     </td>
                   ))}

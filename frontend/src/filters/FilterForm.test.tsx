@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SOURCE } from "../test/fixtures";
+import { PORTAL_SOURCE, SOURCE } from "../test/fixtures";
 import { buildFilters, FilterForm } from "./FilterForm";
 
 describe("buildFilters", () => {
@@ -58,5 +58,26 @@ describe("FilterForm", () => {
   it("disables submission while a job is being created", () => {
     render(<FilterForm source={SOURCE} errors={{}} submitting onSubmit={() => {}} />);
     expect(screen.getByRole("button", { name: "Enviando…" })).toBeDisabled();
+  });
+});
+
+describe("FilterForm with a Portal API base", () => {
+  it("marks the required filters, picks a single agency and tells the period limit", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<FilterForm source={PORTAL_SOURCE} errors={{}} submitting={false} onSubmit={onSubmit} />);
+
+    expect(screen.getAllByText("(obrigatório)")).toHaveLength(2);
+    expect(screen.getByText("Até 12 meses por consulta.")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Ministério da Educação (26000)" }));
+    await user.click(screen.getByRole("radio", { name: "Ministério da Saúde (36000)" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "De" }), "2025-01");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Até" }), "2025-06");
+    await user.click(screen.getByRole("button", { name: "Executar os três algoritmos" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      { agency_code: ["36000"], period: { from: "2025-01", to: "2025-06" } },
+      0.01,
+    );
   });
 });
