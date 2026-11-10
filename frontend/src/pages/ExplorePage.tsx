@@ -36,7 +36,7 @@ export function ExplorePage() {
     <section>
       <h1>Exploração</h1>
       <p className="lead">
-        Escolha um recorte da amostra publicada e execute os três algoritmos sobre ele. As anomalias são{" "}
+        Escolha uma base e um recorte e execute os três algoritmos sobre ele. As anomalias são{" "}
         <strong>relativas ao recorte</strong>: um registro é atípico em comparação com os demais registros filtrados,
         não com a base inteira. Os resultados da exploração não fazem parte do experimento do artigo.
       </p>
@@ -58,6 +58,15 @@ export function ExplorePage() {
       {source && (
         <>
           <h2>{source.label}</h2>
+          {source.kind === "portal" ? (
+            <Notice>
+              Os registros desta base são consultados <strong>na API do Portal da Transparência</strong> no momento
+              da execução, para um órgão e até 12 meses. A consulta respeita o limite de requisições do Portal e pode
+              levar alguns minutos; recortes grandes são interrompidos no limite de registros da exploração.
+            </Notice>
+          ) : (
+            <p className="hint">O recorte é feito sobre a amostra do experimento publicada no banco.</p>
+          )}
           {submitError && <Notice kind="error">{submitError}</Notice>}
           <FilterForm key={source.name} source={source} errors={errors} submitting={submitting} onSubmit={submit} />
         </>

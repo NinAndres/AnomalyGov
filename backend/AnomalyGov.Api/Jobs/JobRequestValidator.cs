@@ -18,14 +18,22 @@ public static partial class JobRequestValidator
     public static Dictionary<string, string[]> ValidateFilters(SourceDefinition source, JsonElement? filters)
     {
         var errors = new Dictionary<string, string[]>();
-        if (filters is not { } value || value.ValueKind == JsonValueKind.Null)
+        if (filters is { ValueKind: not (JsonValueKind.Object or JsonValueKind.Null) })
         {
+            errors["filters"] = ["Os filtros devem ser um objeto."];
             return errors;
         }
 
-        if (value.ValueKind != JsonValueKind.Object)
+        foreach (var required in source.Filters.Where(f => f.Required))
         {
-            errors["filters"] = ["Os filtros devem ser um objeto."];
+            if (filters is not { ValueKind: JsonValueKind.Object } given || !given.TryGetProperty(required.Name, out _))
+            {
+                errors[$"filters.{required.Name}"] = ["Obrigatório para esta base."];
+            }
+        }
+
+        if (filters is not { ValueKind: JsonValueKind.Object } value)
+        {
             return errors;
         }
 
@@ -120,6 +128,19 @@ public static partial class JobRequestValidator
             return "\"from\" deve ser anterior ou igual a \"to\".";
         }
 
+        if (definition.MaxMonths is { } maxMonths)
+        {
+            if (from is null || to is null)
+            {
+                return "Informe o mês inicial e o mês final.";
+            }
+
+            if (MonthIndex(to) - MonthIndex(from) + 1 > maxMonths)
+            {
+                return $"O período pode ter no máximo {maxMonths} meses.";
+            }
+        }
+
         // An open bound extends to the edge of the available data.
         var min = definition.Min?.GetString();
         var max = definition.Max?.GetString();
@@ -142,9 +163,10 @@ public static partial class JobRequestValidator
             return "Use uma lista não vazia de valores.";
         }
 
-        if (value.GetArrayLength() > MaxSelectedOptions)
+        var maxSelected = Math.Min(definition.MaxSelected ?? MaxSelectedOptions, MaxSelectedOptions);
+        if (value.GetArrayLength() > maxSelected)
         {
-            return $"Selecione no máximo {MaxSelectedOptions} valores.";
+            return maxSelected == 1 ? "Selecione apenas um valor." : $"Selecione no máximo {maxSelected} valores.";
         }
 
         var allowed = definition.Options?.Select(o => o.Value).ToHashSet();
@@ -163,6 +185,9 @@ public static partial class JobRequestValidator
 
         return null;
     }
+
+    private static int MonthIndex(string month) =>
+        int.Parse(month[..4], CultureInfo.InvariantCulture) * 12 + int.Parse(month[5..], CultureInfo.InvariantCulture);
 
     private static string? ValidateNumberRange(JsonElement value)
     {

@@ -11,17 +11,18 @@ public sealed record CreateJobRequest(string? Source, JsonElement? Filters, Json
 
 public sealed record Job(
     Guid Id, string Source, string Mode, string Status, JsonElement Filters, JsonElement Params,
-    JsonElement? Result, string? Error, DateTime CreatedAt, DateTime? StartedAt, DateTime? FinishedAt);
+    JsonElement? Result, string? Error, DateTime CreatedAt, DateTime? StartedAt, DateTime? FinishedAt,
+    JsonElement? Progress);
 
 public sealed class JobRepository(NpgsqlDataSource dataSource)
 {
     private sealed record Row(
         Guid Id, string Source, string Mode, string Status, string Filters, string Params, string? Result,
-        string? Error, DateTime CreatedAt, DateTime? StartedAt, DateTime? FinishedAt);
+        string? Error, DateTime CreatedAt, DateTime? StartedAt, DateTime? FinishedAt, string? Progress);
 
     private const string Columns = """
         id, source, mode, status, filters::text AS filters, params::text AS params, result::text AS result, error,
-        created_at AS createdat, started_at AS startedat, finished_at AS finishedat
+        created_at AS createdat, started_at AS startedat, finished_at AS finishedat, progress::text AS progress
         """;
 
     public async Task<Job> CreateAsync(string source, JsonElement filters, object parameters, CancellationToken ct)
@@ -44,7 +45,7 @@ public sealed class JobRepository(NpgsqlDataSource dataSource)
 
     private static Job ToJob(Row r) => new(
         r.Id, r.Source, r.Mode, r.Status, Json.Parse(r.Filters)!.Value, Json.Parse(r.Params)!.Value,
-        Json.Parse(r.Result), r.Error, r.CreatedAt, r.StartedAt, r.FinishedAt);
+        Json.Parse(r.Result), r.Error, r.CreatedAt, r.StartedAt, r.FinishedAt, Json.Parse(r.Progress));
 }
 
 public static class JobEndpoints

@@ -212,4 +212,78 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
             await conn.ExecuteAsync("DELETE FROM jobs WHERE id = @jobId", new { jobId });
         }
     }
+
+    [DatabaseFact]
+    public async Task ServesThePortalRecordsOfASucceededJob()
+    {
+        await using var conn = await OpenAsync();
+        // Stand-in for anomalygov_ml.portal.register and the worker: a Portal source with 200 downloaded records,
+        // scored identically by the three algorithms (record i has raw score i).
+        await conn.ExecuteAsync("""
+            INSERT INTO sources (name, label, filters, display_columns, feature_columns, kind)
+            VALUES ('portal_test', 'Teste do Portal',
+                    '[{"name": "agency_code", "type": "select", "label": "Órgão", "required": true, "maxSelected": 1,
+                       "options": [{"value": "26000", "label": "Ministério (26000)"}]},
+                      {"name": "period", "type": "month_range", "label": "Mês", "min": "2025-01", "max": "2025-12",
+                       "required": true, "maxMonths": 12}]',
+                    '["date", "favored_type", "favored_name", "value"]', '["log_value"]', 'portal')
+            ON CONFLICT (name) DO NOTHING
+            """);
+        var jobId = await conn.ExecuteScalarAsync<Guid>("""
+            INSERT INTO jobs (source, status, params, result, progress, started_at, finished_at)
+            VALUES ('portal_test', 'succeeded', '{"p": 0.05}', '{}', '{"phase": "scoring", "received": 200}',
+                    now(), now())
+            RETURNING id
+            """);
+        try
+        {
+            await conn.ExecuteAsync("""
+                WITH records AS (
+                    INSERT INTO portal_records (job_id, "values", features)
+                    SELECT @jobId, jsonb_build_object('date', '2025-03-01',
+                               'favored_type', CASE WHEN i % 2 = 0 THEN 'individual' ELSE 'company' END,
+                               'favored_name', CASE WHEN i % 2 = 0 THEN NULL ELSE 'EMPRESA ' || i END,
+                               'value', i * 10.5),
+                           ARRAY[i::float8]
+                    FROM generate_series(1, 200) i
+                    RETURNING id, features[1] AS score),
+                job_runs AS (
+                    INSERT INTO runs (experiment, config_sha256, mode, purpose, algorithm, params, feature_columns,
+                                      n_train, n_scored, fit_seconds, score_seconds, environment, job_id)
+                    SELECT 'exploration', repeat('0', 64), 'exploration', 'main', a, '{}', '{log_value}', 200, 200,
+                           0, 0, '{}', @jobId
+                    FROM unnest(ARRAY['isolation_forest', 'lof', 'one_class_svm']) a
+                    RETURNING id)
+                INSERT INTO portal_scores (run_id, record_id, raw_score, normalized_score)
+                SELECT r.id, x.id, x.score, x.score / 200 FROM job_runs r CROSS JOIN records x
+                """, new { jobId });
+
+            var job = await _client.GetFromJsonAsync<JsonElement>($"/api/jobs/{jobId}");
+            Assert.Equal(200, job.GetProperty("progress").GetProperty("received").GetInt32());
+
+            var page = await _client.GetFromJsonAsync<JsonElement>($"/api/jobs/{jobId}/records?pageSize=50");
+            Assert.Equal(10, page.GetProperty("total").GetInt64()); // top 5% of 200
+            var top = page.GetProperty("items")[0];
+            Assert.Equal(3, top.GetProperty("flaggedCount").GetInt32());
+            Assert.Equal(1.0, top.GetProperty("scores").GetProperty("lof").GetDouble());
+            var values = top.GetProperty("values");
+            Assert.Equal(["date", "favored_type", "favored_name", "value"], values.EnumerateObject().Select(v => v.Name));
+            Assert.Equal(2100.0, values.GetProperty("value").GetDouble());
+            Assert.Equal("individual", values.GetProperty("favored_type").GetString());
+            Assert.Equal(JsonValueKind.Null, values.GetProperty("favored_name").ValueKind);
+            Assert.Equal("EMPRESA 199",
+                page.GetProperty("items")[1].GetProperty("values").GetProperty("favored_name").GetString());
+
+            var missing = await _client.PostAsJsonAsync("/api/jobs", new { source = "portal_test", filters = new { } });
+            Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+            var errors = (await missing.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors");
+            Assert.True(errors.TryGetProperty("filters.agency_code", out _));
+            Assert.True(errors.TryGetProperty("filters.period", out _));
+        }
+        finally
+        {
+            await conn.ExecuteAsync("DELETE FROM jobs WHERE source = 'portal_test'");
+            await conn.ExecuteAsync("DELETE FROM sources WHERE name = 'portal_test'");
+        }
+    }
 }

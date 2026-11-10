@@ -92,3 +92,72 @@ def test_housekeeping_fails_stale_jobs_and_deletes_old_ones(source, target, expe
     assert target.execute("SELECT status, error IS NOT NULL FROM jobs WHERE id = %s", (stale,)).fetchone() == ("failed", True)
     assert target.execute("SELECT count(*) FROM jobs WHERE id = %s", (old,)).fetchone()[0] == 0
     assert target.execute("SELECT count(*) FROM jobs WHERE id = %s", (recent,)).fetchone()[0] == 1
+
+
+class FakePortal:
+    """Stands in for PortalClient: serves the given items in pages of 15, for any month."""
+
+    def __init__(self, items, error=None):
+        self.items, self.error, self.requests = items, error, 0
+
+    def pages(self, endpoint, params):
+        if self.error:
+            raise self.error
+        for start in range(0, len(self.items), 15):
+            self.requests += 1
+            yield self.items[start:start + 15]
+
+
+def test_worker_processes_portal_jobs(source, target, experiment):
+    from test_portal import sample_item
+
+    from anomalygov_ml.portal.client import PortalError
+    from anomalygov_ml.portal.register import agency_options, register
+
+    config = CONFIGS / f"{experiment}.toml"
+    if not config.exists():
+        pytest.skip(f"no config for {experiment}")
+    publish(source, target, experiment)
+    register(target, agency_options(source), "2026-10")
+    portal = FakePortal([sample_item("portal_contracts", i) for i in range(300)])
+    worker = Worker(target, config, Settings(min_rows=100, portal_max_rows=250), portal_client=lambda: portal)
+
+    def create(filters):
+        return str(target.execute(
+            "INSERT INTO jobs (source, filters, params) VALUES ('portal_contracts', %s, '{\"p\": 0.02}') RETURNING id",
+            (Jsonb(filters),),
+        ).fetchone()[0])
+
+    ok = create({"agency_code": ["26000"], "period": {"from": "2025-03", "to": "2025-03"}})
+    assert worker.run_once()
+    status, result, error = job(target, ok)
+    assert (status, error) == ("succeeded", None)
+    # Truncated at the cap, which the user is told about.
+    assert result["portal"]["truncated"] and result["portal"]["received"] == 250 and result["n_used"] == 250
+    assert target.execute("SELECT progress->>'phase' FROM jobs WHERE id = %s", (ok,)).fetchone()[0] == "scoring"
+    runs = target.execute(
+        """SELECT r.algorithm, r.train_sample_id, count(s.*), max(s.normalized_score) FROM runs r
+           JOIN portal_scores s ON s.run_id = r.id WHERE r.job_id = %s GROUP BY 1, 2""", (ok,)).fetchall()
+    assert sorted(r[0] for r in runs) == ["isolation_forest", "lof", "one_class_svm"]
+    assert all(r[1] is None and r[2] == 250 and r[3] == 1.0 for r in runs)
+    stored = target.execute("SELECT \"values\" FROM portal_records WHERE job_id = %s", (ok,)).fetchall()
+    assert len(stored) == 250 and all("PESSOA" not in str(v) for (v,) in stored)
+
+    # Errors of the API and too small cuts fail the job with a message, writing nothing.
+    worker.portal_client = lambda: FakePortal([], PortalError("A API do Portal recusou a chave de acesso do worker."))
+    refused = create({"agency_code": ["26000"], "period": {"from": "2025-03", "to": "2025-03"}})
+    assert worker.run_once()
+    worker.portal_client = lambda: FakePortal([sample_item("portal_contracts", i) for i in range(20)])
+    small = create({"agency_code": ["26000"], "period": {"from": "2025-03", "to": "2025-03"}})
+    missing = create({"period": {"from": "2025-03", "to": "2025-03"}})
+    assert worker.run_once() and worker.run_once()
+    assert job(target, refused)[0] == "failed" and "chave" in job(target, refused)[2]
+    assert job(target, small)[0] == "failed" and "mínimo" in job(target, small)[2]
+    assert job(target, missing)[0] == "failed" and "órgão" in job(target, missing)[2]
+    assert target.execute("SELECT count(*) FROM runs WHERE job_id IN (%s, %s, %s)",
+                          (refused, small, missing)).fetchone()[0] == 0
+
+    # Deleting the job (retention) deletes its records and scores.
+    target.execute("DELETE FROM jobs WHERE id = %s", (ok,))
+    assert target.execute("SELECT count(*) FROM portal_records").fetchone()[0] == 0
+    assert target.execute("SELECT count(*) FROM portal_scores").fetchone()[0] == 0

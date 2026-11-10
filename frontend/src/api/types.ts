@@ -15,13 +15,23 @@ export interface FilterDefinition {
   options: FilterOption[] | null;
   min: string | number | null;
   max: string | number | null;
+  /** The job must use this filter (Portal API bases: agency and period). */
+  required?: boolean;
+  /** Select filters: most values that can be chosen. */
+  maxSelected?: number | null;
+  /** Month ranges: both bounds are required and the range spans at most this many months. */
+  maxMonths?: number | null;
 }
+
+/** "sample": cuts of the published sample; "portal": cuts downloaded from the Portal API by the worker. */
+export type SourceKind = "sample" | "portal";
 
 export interface SourceDefinition {
   name: string;
   label: string;
   filters: FilterDefinition[];
   displayColumns: string[];
+  kind?: SourceKind;
 }
 
 export type MonthRange = { from?: string; to?: string };
@@ -31,12 +41,30 @@ export type Filters = Record<string, FilterValue>;
 
 export type JobStatus = "pending" | "running" | "succeeded" | "failed";
 
+/** Download from the Portal API (decision 0014). */
+export interface PortalResult {
+  requests: number;
+  received: number;
+  excluded: Record<string, number>;
+  truncated: boolean;
+  max_rows: number;
+}
+
 export interface JobResult {
   n_filtered: number;
   n_used: number;
   sampled: boolean;
   sample_seed: number | null;
   runs: Record<Algorithm, number>;
+  portal?: PortalResult;
+}
+
+/** Progress reported by the worker while a Portal job runs. */
+export interface JobProgress {
+  phase: "fetching" | "scoring";
+  month?: string;
+  received: number;
+  requests: number;
 }
 
 export interface Job {
@@ -51,6 +79,7 @@ export interface Job {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  progress?: JobProgress | null;
 }
 
 export interface FlaggedRecord {

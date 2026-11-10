@@ -3,7 +3,8 @@
 Usage: python -m anomalygov_ml.worker --config experiments/configs/principal-2025.toml [--once] [--poll SECONDS]
 
 Connects to SUPABASE_DATABASE_URL. Settings (environment): EXPLORATION_MAX_ROWS (50000), EXPLORATION_MIN_ROWS
-(100), EXPLORATION_RETENTION_HOURS (24), EXPLORATION_STALE_MINUTES (30).
+(100), EXPLORATION_RETENTION_HOURS (24), EXPLORATION_STALE_MINUTES (30), EXPLORATION_PORTAL_MAX_ROWS (10000).
+Jobs of Portal API bases (decision 0014) also need PORTAL_API_KEY.
 """
 
 import argparse
@@ -14,6 +15,7 @@ import re
 import time
 import tomllib
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,11 +28,14 @@ from sklearn.preprocessing import RobustScaler
 from anomalygov_ml import metrics
 from anomalygov_ml.experiment import environment, insert_run
 from anomalygov_ml.models import DETECTORS
+from anomalygov_ml.portal.bases import BASES, compute_features, display_values, fetch, normalize
+from anomalygov_ml.portal.client import PortalClient, PortalError
 
 ALGORITHMS = ("isolation_forest", "lof", "one_class_svm")
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 EXPERIMENT = "exploration"
 RECONNECT_SECONDS = 10
+PROGRESS_SECONDS = 3.0  # minimum interval between progress updates written to the job
 log = logging.getLogger("anomalygov.worker")
 
 
@@ -44,6 +49,7 @@ class Settings:
     min_rows: int = 100
     retention_hours: float = 24
     stale_minutes: float = 30
+    portal_max_rows: int = 10000
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -52,6 +58,7 @@ class Settings:
             min_rows=int(os.environ.get("EXPLORATION_MIN_ROWS", cls.min_rows)),
             retention_hours=float(os.environ.get("EXPLORATION_RETENTION_HOURS", cls.retention_hours)),
             stale_minutes=float(os.environ.get("EXPLORATION_STALE_MINUTES", cls.stale_minutes)),
+            portal_max_rows=int(os.environ.get("EXPLORATION_PORTAL_MAX_ROWS", cls.portal_max_rows)),
         )
 
 
@@ -105,6 +112,14 @@ def claim(conn: psycopg.Connection) -> dict[str, Any] | None:
     return {"id": str(row[0]), "source": row[1], "filters": row[2], "params": row[3]}
 
 
+def finish(cur: psycopg.Cursor, job_id: str, result: dict[str, Any]) -> None:
+    cur.execute(
+        """UPDATE jobs SET status = 'succeeded', finished_at = now(), result = %s
+           WHERE id = %s AND status = 'running'""",
+        (Jsonb(result), job_id),
+    )
+
+
 def fail(conn: psycopg.Connection, job_id: str, message: str) -> None:
     conn.execute(
         "UPDATE jobs SET status = 'failed', finished_at = now(), error = %s WHERE id = %s AND status = 'running'",
@@ -129,11 +144,13 @@ def housekeeping(conn: psycopg.Connection, settings: Settings) -> None:
 
 
 class Worker:
-    def __init__(self, conn: psycopg.Connection, config_path: Path, settings: Settings):
+    def __init__(self, conn: psycopg.Connection, config_path: Path, settings: Settings,
+                 portal_client: Callable[[], PortalClient] = PortalClient.from_env):
         raw = config_path.read_bytes()
         config = tomllib.loads(raw.decode("utf-8"))
         self.conn = conn
         self.settings = settings
+        self.portal_client = portal_client
         self.main_params: dict[str, dict[str, Any]] = config["main"]
         self.config_sha256 = hashlib.sha256(raw).hexdigest()
         self.environment = environment()
@@ -149,11 +166,13 @@ class Worker:
     def process(self, job: dict[str, Any]) -> dict[str, Any]:
         source = identifier(job["source"])
         definition = self.conn.execute(
-            "SELECT filters, feature_columns FROM sources WHERE name = %s", (source,)
+            "SELECT filters, feature_columns, kind FROM sources WHERE name = %s", (source,)
         ).fetchone()
         if definition is None:
             raise JobError(f"Base desconhecida: {source}")
-        filter_definitions, feature_columns = definition
+        filter_definitions, feature_columns, kind = definition
+        if kind == "portal":
+            return self.process_portal(job, list(feature_columns))
         where, params = filter_sql(job["filters"], filter_definitions)
         rows = self.conn.execute(
             f"""SELECT d.id, f."values" FROM {source}_display d
@@ -172,8 +191,74 @@ class Worker:
             keep = np.sort(np.random.default_rng(seed).choice(n_filtered, self.settings.max_rows, replace=False))
             rows = [rows[i] for i in keep]
         ids = [r[0] for r in rows]
-        X = RobustScaler().fit_transform(np.array([r[1] for r in rows], dtype=float))
+        outputs = self.run_algorithms(RobustScaler().fit_transform(np.array([r[1] for r in rows], dtype=float)))
 
+        subset = {"filters": job["filters"], "sampled": sampled, "sample_seed": seed}
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            run_ids = self.save_runs(cur, job, outputs, list(feature_columns), ids, subset, self.sample_id,
+                                     "COPY run_scores (run_id, payment_id, raw_score, normalized_score) FROM STDIN")
+            result = {"n_filtered": n_filtered, "n_used": len(ids), "sampled": sampled, "sample_seed": seed,
+                      "runs": run_ids}
+            finish(cur, job["id"], result)
+        return result
+
+    def process_portal(self, job: dict[str, Any], feature_columns: list[str]) -> dict[str, Any]:
+        """Download the cut from the Portal API, then score it like a sample cut (decision 0014)."""
+        base = BASES.get(job["source"])
+        if base is None:
+            raise JobError(f"Base do Portal desconhecida: {job['source']}")
+        if list(base.feature_columns) != feature_columns:
+            raise JobError("A definição da base está desatualizada. Registre as bases do Portal novamente.")
+        agencies = job["filters"].get("agency_code") or []
+        period = job["filters"].get("period") or {}
+        if len(agencies) != 1 or not period.get("from") or not period.get("to"):
+            raise JobError("Informe um órgão e o período (mês inicial e final) para consultar o Portal.")
+
+        last_report = 0.0
+
+        def on_page(month: str, received: int) -> None:
+            nonlocal last_report
+            if time.monotonic() - last_report >= PROGRESS_SECONDS:
+                self.report_progress(job["id"], {"phase": "fetching", "month": month, "received": received,
+                                                 "requests": client.requests})
+                last_report = time.monotonic()
+
+        try:
+            client = self.portal_client()
+            fetched = fetch(client, base, agencies[0], period["from"], period["to"], self.settings.portal_max_rows,
+                            on_page)
+        except PortalError as error:
+            raise JobError(str(error)) from None
+        self.report_progress(job["id"], {"phase": "scoring", "received": len(fetched.items),
+                                         "requests": fetched.requests})
+
+        df, excluded = normalize(base, fetched.items)
+        if len(df) < self.settings.min_rows:
+            raise JobError(f"O Portal devolveu {len(df)} registros utilizáveis para este órgão e período; o mínimo "
+                           f"é {self.settings.min_rows}. Amplie o período ou escolha outro órgão.")
+        features = compute_features(base, df)
+        outputs = self.run_algorithms(RobustScaler().fit_transform(features.to_numpy()))
+
+        portal = {"requests": fetched.requests, "received": len(fetched.items), "excluded": excluded,
+                  "truncated": fetched.truncated, "max_rows": self.settings.portal_max_rows}
+        subset = {"filters": job["filters"], "portal": portal}
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            ids = [row[0] for row in cur.execute(
+                "SELECT nextval(pg_get_serial_sequence('portal_records', 'id')) FROM generate_series(1, %s)",
+                (len(df),),
+            ).fetchall()]
+            with cur.copy('COPY portal_records (id, job_id, "values", features) FROM STDIN') as copy:
+                copy.set_types(["int8", "uuid", "jsonb", "float8[]"])
+                for record_id, values, row in zip(ids, display_values(base, df), features.to_numpy()):
+                    copy.write_row((record_id, uuid.UUID(job["id"]), Jsonb(values), [float(v) for v in row]))
+            run_ids = self.save_runs(cur, job, outputs, feature_columns, ids, subset, None,
+                                     "COPY portal_scores (run_id, record_id, raw_score, normalized_score) FROM STDIN")
+            result = {"n_filtered": len(df), "n_used": len(df), "sampled": False, "sample_seed": None,
+                      "runs": run_ids, "portal": portal}
+            finish(cur, job["id"], result)
+        return result
+
+    def run_algorithms(self, X: np.ndarray) -> list[tuple]:
         outputs = []
         for algorithm in ALGORITHMS:
             params = dict(self.main_params[algorithm])
@@ -185,29 +270,28 @@ class Worker:
             start = time.perf_counter()
             scores = detector.score(X)
             outputs.append((algorithm, detector, random_state, scores, fit_seconds, time.perf_counter() - start))
+        return outputs
 
-        subset = {"filters": job["filters"], "sampled": sampled, "sample_seed": seed}
+    def save_runs(self, cur: psycopg.Cursor, job: dict[str, Any], outputs: list[tuple], feature_columns: list[str],
+                  ids: list[int], subset: dict[str, Any], sample_id: int | None, copy_sql: str) -> dict[str, int]:
+        """One row in `runs` per algorithm and its scores (copy_sql: COPY into the scores table of the source)."""
         run_ids = {}
-        with self.conn.transaction(), self.conn.cursor() as cur:
-            for algorithm, detector, random_state, scores, fit_seconds, score_seconds in outputs:
-                run_id = insert_run(
-                    cur, EXPERIMENT, self.config_sha256, "main", algorithm, detector.resolved_params, random_state,
-                    list(feature_columns), self.sample_id, self.sample_id, len(ids), len(ids), fit_seconds,
-                    score_seconds, self.environment, subset, mode="exploration", job_id=job["id"],
-                )
-                normalized = metrics.normalize(scores)
-                with cur.copy("COPY run_scores (run_id, payment_id, raw_score, normalized_score) FROM STDIN") as copy:
-                    for record_id, raw, norm in zip(ids, scores, normalized):
-                        copy.write_row((run_id, record_id, float(raw), float(norm)))
-                run_ids[algorithm] = run_id
-            result = {"n_filtered": n_filtered, "n_used": len(ids), "sampled": sampled, "sample_seed": seed,
-                      "runs": run_ids}
-            cur.execute(
-                """UPDATE jobs SET status = 'succeeded', finished_at = now(), result = %s
-                   WHERE id = %s AND status = 'running'""",
-                (Jsonb(result), job["id"]),
+        for algorithm, detector, random_state, scores, fit_seconds, score_seconds in outputs:
+            run_id = insert_run(
+                cur, EXPERIMENT, self.config_sha256, "main", algorithm, detector.resolved_params, random_state,
+                feature_columns, sample_id, sample_id, len(ids), len(ids), fit_seconds, score_seconds,
+                self.environment, subset, mode="exploration", job_id=job["id"],
             )
-        return result
+            normalized = metrics.normalize(scores)
+            with cur.copy(copy_sql) as copy:
+                for record_id, raw, norm in zip(ids, scores, normalized):
+                    copy.write_row((run_id, record_id, float(raw), float(norm)))
+            run_ids[algorithm] = run_id
+        return run_ids
+
+    def report_progress(self, job_id: str, progress: dict[str, Any]) -> None:
+        self.conn.execute("UPDATE jobs SET progress = %s WHERE id = %s AND status = 'running'",
+                          (Jsonb(progress), job_id))
 
     def run_once(self) -> bool:
         """Process the oldest pending job, if any. Returns whether a job was processed."""

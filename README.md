@@ -22,7 +22,7 @@ React → API C# → Supabase (jobs, resultados) ← worker Python
 
 - **`ml/`** — ETL, features, amostragem, algoritmos, métricas, hipóteses, publicação e worker.
 - **`backend/`** — API ASP.NET Core 9: bases, jobs e resultados. Não executa algoritmos.
-- **`frontend/`** — React + TypeScript (Vite): resultados do experimento e exploração por recorte.
+- **`frontend/`** — React + TypeScript (Vite): resultados do experimento e exploração por recorte, da amostra publicada ou de seis bases consultadas na API do Portal (decisão 0014).
 - **`db/migrations/`** — schema; aplicar em ordem no Postgres local e no Supabase.
 
 ## Pré-requisitos
@@ -59,6 +59,8 @@ set -a && . ../.env && set +a   # DATABASE_URL e SUPABASE_DATABASE_URL
 .venv/Scripts/python -m anomalygov_ml.figures principal-2025
 # 4. Publicação no Supabase (migrations aplicadas antes)
 .venv/Scripts/python -m anomalygov_ml.publish principal-2025
+# 5. Bases consultadas na API do Portal no modo exploração (decisão 0014); opções de órgão vindas do banco local
+.venv/Scripts/python -m anomalygov_ml.portal.register
 ```
 
 ## Aplicação

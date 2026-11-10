@@ -45,6 +45,26 @@ const COLUMN_LABELS: Record<string, string> = {
   uf: "UF",
   municipality: "Município",
   amount: "Valor recebido",
+  // Portal API bases (decision 0014)
+  date: "Data",
+  value: "Valor",
+  portal_id: "Id no Portal",
+  card_type: "Tipo de cartão",
+  travel_situation: "Situação da viagem",
+  purchase_modality: "Modalidade da compra",
+  bidding_modality: "Modalidade da licitação",
+  bidding_situation: "Situação da licitação",
+  agreement_situation: "Situação do convênio",
+};
+
+/** Columns shown as currency and aligned to the right. */
+export const MONEY_COLUMNS = ["amount", "value"];
+
+const FAVORED_TYPE_LABELS: Record<string, string> = {
+  individual: "Pessoa física",
+  company: "Pessoa jurídica",
+  management_unit: "Unidade gestora federal",
+  other: "Não identificado",
 };
 
 export function columnLabel(column: string): string {
@@ -80,6 +100,12 @@ export function formatMonth(month: string): string {
   return `${name}/${year}`;
 }
 
+/** "2025-03-14" → "14/03/2025". */
+export function formatDate(iso: string): string {
+  const [year, month, day] = iso.slice(0, 10).split("-");
+  return `${day}/${month}/${year}`;
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString(LOCALE, { dateStyle: "short", timeStyle: "medium" });
@@ -95,11 +121,18 @@ export function formatValue(
   if (column === "favored_name" && value === null && row.favored_type === "individual") {
     return "Pessoa física (oculto — LGPD)";
   }
+  if (column === "favored_name" && value === null && row.favored_type === "other") {
+    return "Não identificado (oculto)";
+  }
   if (value === null || value === undefined) return "—";
-  if (column === "amount") return formatCurrency(Number(value));
+  if (MONEY_COLUMNS.includes(column)) return formatCurrency(Number(value));
   if (column === "reference_month" && typeof value === "string") return formatMonth(value);
+  if (column === "date" && typeof value === "string") return formatDate(value);
   const options = filters.find((f) => f.name === column)?.options;
-  return options?.find((o) => o.value === value)?.label ?? String(value);
+  const label = options?.find((o) => o.value === value)?.label;
+  if (label) return label;
+  if (column === "favored_type") return FAVORED_TYPE_LABELS[String(value)] ?? String(value);
+  return String(value);
 }
 
 /** Every month between two "YYYY-MM" values, inclusive. */
