@@ -270,9 +270,18 @@ def test_fetch_goes_month_by_month_and_stops_at_the_cap():
     assert "codigoOrgao=26000" in sent[0].full_url and "mesExtratoInicio=01%2F2025" in sent[0].full_url
     assert "mesExtratoInicio=02%2F2025" in sent[2].full_url
 
+    # Records beyond the cap: truncated, which takes one request past the page that reached it.
     client, sent, _ = client_with(list(pages), requests_per_minute=6000)
     result = fetch(client, base, "26000", "2025-01", "2025-02", 3)
-    assert [i["id"] for i in result.items] == [1, 2, 3] and result.truncated and len(sent) == 2
+    assert [i["id"] for i in result.items] == [1, 2, 3] and result.truncated and len(sent) == 3
+
+
+def test_fetch_is_not_truncated_when_the_cut_has_exactly_the_cap():
+    base = BASES["portal_cards"]
+    pages = [[{"id": 1}, {"id": 2}], [{"id": 3}], [{"id": 4}, {"id": 5}], [{"id": 6}]]
+    client, sent, _ = client_with(list(pages), requests_per_minute=6000)
+    result = fetch(client, base, "26000", "2025-01", "2025-02", 6)
+    assert [i["id"] for i in result.items] == [1, 2, 3, 4, 5, 6] and not result.truncated and len(sent) == 4
 
 
 def test_definition_requires_one_agency_and_a_bounded_period():

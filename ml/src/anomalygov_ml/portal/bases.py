@@ -363,7 +363,12 @@ class FetchResult:
 
 def fetch(client: PortalClient, base: PortalBase, agency: str, first_month: str, last_month: str, max_rows: int,
           on_page: Callable[[str, int], None] | None = None) -> FetchResult:
-    """Download the records of one agency, month by month, stopping once `max_rows` were received."""
+    """Download the records of one agency, month by month, stopping once more than `max_rows` were received.
+
+    The cut is truncated only when the Portal has records beyond the cap: reaching exactly `max_rows` costs one
+    more request, to tell a complete cut from an interrupted one. Repeated records count toward the cap, since
+    they are only removed by `normalize`.
+    """
     items: list[dict[str, Any]] = []
     start = client.requests
     for month in months_between(first_month, last_month):
@@ -371,8 +376,8 @@ def fetch(client: PortalClient, base: PortalBase, agency: str, first_month: str,
             for page in client.pages(base.endpoint, {base.agency_param: agency, **period}):
                 items.extend(page)
                 if on_page:
-                    on_page(month, len(items))
-                if len(items) >= max_rows:
+                    on_page(month, min(len(items), max_rows))
+                if len(items) > max_rows:
                     return FetchResult(items[:max_rows], client.requests - start, True)
     return FetchResult(items, client.requests - start, False)
 

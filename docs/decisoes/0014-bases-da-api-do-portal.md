@@ -35,6 +35,8 @@ Os endpoints, os parâmetros obrigatórios e os campos de resposta foram levanta
   Os valores ausentes de uma feature extra são imputados com a mediana do recorte.
 - **Exclusões:** registros repetidos (mesmo id do Portal, comum em contratos vigentes em mais de um mês consultado), sem data e sem valor positivo. As contagens ficam no resultado do job.
 - **Teto de registros.** `EXPLORATION_PORTAL_MAX_ROWS` vale 10.000 por padrão. A API não informa o total antes da consulta, então o download é interrompido no teto e o job registra `truncated`. Nesse caso, o recorte analisado contém os primeiros registros devolvidos pelo Portal, e **não** uma amostra aleatória. A interface avisa isso.
+  - `truncated` só é registrado quando o Portal tem registros além do teto. Um recorte com exatamente o teto de registros custa uma requisição a mais, que confirma que não há mais nada.
+  - Os registros repetidos contam para o teto, porque só são descartados depois do download. Em contratos e convênios, um registro vigente em vários meses volta uma vez por mês consultado, então um período longo pode atingir o teto com bem menos registros distintos.
 - **Cliente da API** (`portal/client.py`, só com a biblioteca padrão):
   - a chave vai apenas no header `chave-api-dados`, lida de `PORTAL_API_KEY`, e nunca aparece em logs, mensagens ou `repr`;
   - as requisições são espaçadas para ficar abaixo do limite do Portal (`PORTAL_API_REQUESTS_PER_MINUTE`, padrão 80, abaixo do limite diurno de 90 por minuto);
@@ -48,6 +50,7 @@ Os endpoints, os parâmetros obrigatórios e os campos de resposta foram levanta
 ## Consequências
 
 - Um job de uma base do Portal leva minutos, não segundos. Com cerca de 15 registros por página e 80 requisições por minuto, o teto de 10.000 registros leva cerca de 8 minutos. Enquanto isso, o worker não processa outros jobs. O job informa o andamento (`jobs.progress`), e o frontend o exibe.
+- Com mais de um worker, a limpeza de um worker marca como falho o job que outro está processando há mais de `EXPLORATION_STALE_MINUTES` (30 min). Um job do Portal fica abaixo disso, mas novas tentativas longas podem se aproximar do limite. Com um único worker, a limpeza não roda durante o job. Se a aplicação passar a usar vários workers, o limite deve ser revisto.
 - O tamanho da página não é documentado. Na API real, as páginas têm 15 registros. O cliente considera como última a página vazia ou a página menor que a maior já recebida.
 - Viagens com retorno depois do fim do mês seguinte ao início ficam fora do recorte.
 

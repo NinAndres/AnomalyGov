@@ -267,7 +267,7 @@ Nas bases `portal`, `n_filtered` e `n_used` são os registros utilizáveis, `sam
 }
 ```
 
-`truncated: true` significa que o recorte analisado contém os primeiros registros devolvidos pelo Portal, e não o período inteiro.
+`truncated: true` significa que o Portal tinha mais registros que o teto e que o recorte analisado contém os primeiros registros devolvidos, e não o período inteiro. Um recorte com exatamente `max_rows` registros não é marcado como truncado.
 
 ## API (backend)
 
